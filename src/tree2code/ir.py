@@ -115,6 +115,19 @@ def _eval_numeric_branch(node: TreeNode, value: Any) -> bool:
     """Evaluate numeric split condition for one non-missing value."""
     assert node.threshold is not None
 
+    # LightGBM `missing_type=None` treats NaN/None like numeric zero
+    # in branch comparison rather than routing through default_left.
+    if node.missing_type == "none":
+        if value is None:
+            value = 0.0
+        else:
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                parsed = None
+            if parsed is not None and math.isnan(parsed):
+                value = 0.0
+
     try:
         if node.float32_compare:
             left_value = _float32(value)

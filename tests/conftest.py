@@ -10,8 +10,8 @@ import sys
 @pytest.fixture(scope="session")
 def dataset():
     X, y = make_classification(
-        n_samples=400,
-        n_features=8,
+        n_samples=10000,
+        n_features=100,
         n_informative=4,
         n_redundant=2,
         random_state=42,
@@ -34,7 +34,7 @@ def xgb_model(train_test):
 
     X_train, X_test, y_train, y_test = train_test
     model = xgb.XGBClassifier(
-        n_estimators=5,
+        n_estimators=100,
         max_depth=3,
         learning_rate=0.15,
         subsample=1.0,
@@ -53,8 +53,8 @@ def lgb_model(train_test):
 
     X_train, X_test, y_train, y_test = train_test
     model = lgb.LGBMClassifier(
-        n_estimators=5,
-        max_depth=3,
+        n_estimators=300,
+        max_depth=5,
         learning_rate=0.15,
         random_state=42,
         boost_from_average=False,  # initscore = 0

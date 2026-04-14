@@ -140,7 +140,7 @@ def test_xgb_python_code_uses_float32_branch_compare(xgb_model):
     out = convert(xgb_model, to="python")
     code = out["python"]
     assert "_safe_numeric_compare(" in code
-    assert "True)" in code
+    assert "True, 'nan')" in code
 
 
 def test_sql_missing_expression_contains_nan_check(xgb_model):

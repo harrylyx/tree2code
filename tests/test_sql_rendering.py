@@ -87,7 +87,7 @@ def test_hive_small_split_threshold_is_clamped():
     assert "1.0000000180025095e-35" in psql_sql.lower()
 
 
-def test_missing_type_none_sql_has_no_missing_wrapper():
+def test_missing_type_none_sql_normalizes_nan_to_zero():
     ir = ModelIR(
         model_type="lightgbm",
         feature_names=["f0"],
@@ -117,5 +117,7 @@ def test_missing_type_none_sql_has_no_missing_wrapper():
         abnormal_spec=AbnormalSpec(),
     )["score_p_expr"]
     assert hive_expr is not None
-    assert "is null" not in hive_expr.lower()
-    assert "isnan(" not in hive_expr.lower()
+    lower_expr = hive_expr.lower()
+    assert "case when" in lower_expr
+    assert "is null or isnan(" in lower_expr
+    assert "then 0.00000000000000000e+00" in lower_expr

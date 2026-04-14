@@ -96,21 +96,45 @@ out = convert(
   - 原因：XGBoost 原生预测链路是 float32，会有微小数值差异
 - 模型分：按 `score_scale` 规则四舍五入后要求一致
 
-## 6. 本地测试
+## 6. 测试与验证
 
-### 6.1 常规测试
+### 6.1 SQL 执行型测试矩阵
+
+树生成 SQL 的正确性统一通过“执行型测试”验证，不再依赖字符串断言：
+
+| 模型 | 特征类型 | 执行引擎 | 测试文件 |
+|---|---|---|---|
+| LightGBM | 数值 + 类别 | PySpark (Hive SQL) | `tests/test_pyspark_parity.py` |
+| XGBoost | 数值 + 类别 | PySpark (Hive SQL) | `tests/test_pyspark_parity.py` |
+| LightGBM | 数值 + 类别 | PostgreSQL (psql SQL) | `tests/test_psql_integration.py` |
+| XGBoost | 数值 + 类别 | PostgreSQL (psql SQL) | `tests/test_psql_integration.py` |
+
+### 6.2 PySpark 一致性验证
+重点验证 Hive SQL 在 Spark 环境下的数值一致性（含类别变量、缺失值）：
 
 ```bash
-uv run --group dev \
-  --with numpy --with pandas --with scikit-learn \
-  --with xgboost==3.2.0 --with lightgbm==4.6.0 \
-  --with 'psycopg[binary]' \
-  pytest -q
+uv run pytest tests/test_pyspark_parity.py -q
 ```
 
-### 6.2 PostgreSQL 集成测试
+该测试覆盖了：
+- **NaN 鲁棒性**：验证 `isnull` / `isnan` 逻辑是否能正确路由缺失值。
+- **双精度对齐**：验证科学计数法字面量是否能强制 Spark 使用 DOUBLE 路径，避免 10^-6 级的误差。
+- **类别分裂对齐**：验证类别命中分支与类别缺失值分支的 SQL 执行结果。
 
-测试连接通过环境变量注入（不在仓库里写明文账号密码）：
+### 6.3 PostgreSQL 集成测试
+若本地有 PostgreSQL 环境，可通过环境变量或项目根目录 `.env` 跑真实数据库对齐（含类别变量）：
+
+`.env` 示例：
+
+```bash
+TREE2CODE_PGHOST=127.0.0.1
+TREE2CODE_PGPORT=5432
+TREE2CODE_PGUSER=your_user
+TREE2CODE_PGPASSWORD=your_password
+TREE2CODE_PGDATABASE=postgres
+```
+
+或直接导出环境变量：
 
 ```bash
 export TREE2CODE_PGHOST=127.0.0.1
@@ -118,70 +142,20 @@ export TREE2CODE_PGPORT=5432
 export TREE2CODE_PGUSER=your_user
 export TREE2CODE_PGPASSWORD=your_password
 export TREE2CODE_PGDATABASE=postgres
+
+uv run pytest tests/test_psql_integration.py -q
 ```
 
-## 7. 跨版本矩阵测试（3.8 ~ 3.14）
+本地未配置 PostgreSQL 连接时，`tests/test_psql_integration.py` 会自动 `skip`，不影响其它测试收集和执行。
+在 CI 中应配置 PostgreSQL 并强制执行该测试文件。
 
+### 6.4 SQL 主链路回归
+```bash
+uv run pytest tests/test_pyspark_parity.py tests/test_psql_integration.py tests/test_sql_rendering.py -q
+```
+
+### 6.5 跨版本矩阵测试（3.8 ~ 3.14）
 ```bash
 python3 scripts/run_version_matrix.py --output matrix_report.json
 ```
-
-脚本会自动：
-- 为每个 Python 版本探测 XGB/LGB 的“最低可安装版本 + 最高可安装版本”
-- 跑转换烟测
-- 生成矩阵报告
-
-## 8. GitHub CI/CD
-
-已配置：
-- `CI`：PR / push 自动测试（含 PostgreSQL 集成）
-- `Release`：打 tag 后自动构建 wheel/sdist 并上传到 GitHub Release
-
-详见：`docs/CI_CD.md`
-
-## 9. test_data 全量对齐报告
-
-按 `idx` 去重后，跑原模型 / 生成 Python / 生成 SQL 三方对齐，并输出报告：
-
-```bash
-python3 scripts/run_testdata_parity.py --output docs/testdata_parity_report.md
-```
-
-## 10. LGB SQL 一致性对比（tree2code vs treemodel2sql）
-
-```bash
-python3 scripts/compare_lgb_sql_consistency.py \
-  --model-path test_data/lgb_model.pkl \
-  --keep-columns idx \
-  --table-name input_table
-```
-
-## 11. 两份 SQL 按树对比（逐棵树数值差异）
-
-输入任意两份 SQL 文件，按树索引比较每棵树里的数值差异（哪些值只在 A 出现、只在 B 出现、近似相等但文本不一致）：
-
-```bash
-python3 scripts/compare_sql_tree_values.py \
-  --sql-a docs/sql_compare/lgb_tree2code_hive.sql \
-  --sql-b docs/sql_compare/lgb_treemodel2sql.sql \
-  --name-a tree2code \
-  --name-b treemodel2sql
-```
-
-默认输出：
-- `docs/sql_compare/sql_tree_value_diff_report.md`
-- `docs/sql_compare/sql_tree_value_diff_report.json`
-
-## 12. PySpark 对齐测试（原模型为金标准）
-
-使用 Spark 本地模式执行两份 SQL（`tree2code` 和 `treemodel2sql`），与原生 LightGBM 预测做逐行对齐：
-
-```bash
-python3 scripts/run_pyspark_parity.py \
-  --data-path test_data/all_data.pq \
-  --model-path test_data/lgb_model.pkl
-```
-
-默认输出：
-- `docs/pyspark_parity_report.md`
-- `docs/pyspark_parity_report.json`
+脚本会自动探测模型库的不同版本组合并运行烟测。

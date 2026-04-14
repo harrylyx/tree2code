@@ -1,70 +1,89 @@
-import math
 import numpy as np
 import pandas as pd
-import pytest
 from tree2code import convert
 
-def test_lgb_spark_parity_with_nan(spark, lgb_model, sample_rows):
-    """Verify LightGBM parity in Spark SQL, including NaN handling and precision."""
-    # Inject some NaNs into the data
-    df = sample_rows.copy()
-    feature_names = list(df.columns)
-    
-    # Ensure at least one row has NaN for a feature used in a split
-    df.iloc[0, 0] = np.nan
-    df.iloc[1, 1] = np.nan
-    
-    native_probs = lgb_model.predict_proba(df)[:, 1]
-    
+
+def _run_spark_sql_parity(
+    spark,
+    model,
+    frame: pd.DataFrame,
+    table_name: str,
+    tolerance: float,
+) -> None:
+    """Run SQL in Spark and compare score_p against native model output by explicit row id."""
+    native_input = frame.reset_index(drop=True).copy()
+    native_probs = model.predict_proba(native_input)[:, 1]
+
+    spark_input = native_input.copy()
+    spark_input.insert(0, "__row_id", np.arange(len(spark_input), dtype=int))
+
+    # Spark handles object/string columns better than pandas Categorical directly.
+    for col in spark_input.columns:
+        if str(spark_input[col].dtype) == "category":
+            spark_input[col] = spark_input[col].astype(object)
+
+    spark.createDataFrame(spark_input).createOrReplaceTempView(table_name)
     out = convert(
-        lgb_model,
+        model,
         to="sql",
         dialect="hive",
         sql_mode="select",
-        table_name="temp_lgb",
-        keep_columns=feature_names
+        table_name=table_name,
+        keep_columns=["__row_id"],
     )
-    sql_query = out["sql"]["select_sql"]
-    
-    spark.createDataFrame(df).createOrReplaceTempView("temp_lgb")
-    spark_results = spark.sql(sql_query).toPandas()
-    
-    sql_probs = spark_results["score_p"].values
-    
-    diff = np.abs(native_probs - sql_probs)
-    max_diff = np.max(diff)
-    print(f"LGB Max Diff: {max_diff:.2e}")
-    
-    # Tight threshold for LightGBM
-    assert max_diff < 1e-12, f"LightGBM Parity failed: Max Diff {max_diff:.2e}"
+    spark_results = spark.sql(out["sql"]["select_sql"]).toPandas()
+
+    expected = pd.DataFrame(
+        {
+            "__row_id": np.arange(len(native_probs), dtype=int),
+            "native_score_p": native_probs,
+        }
+    )
+    merged = expected.merge(
+        spark_results[["__row_id", "score_p"]],
+        on="__row_id",
+        how="left",
+    )
+
+    assert len(merged) == len(expected)
+    assert merged["score_p"].notna().all()
+
+    diff = np.abs(merged["native_score_p"].to_numpy() - merged["score_p"].to_numpy())
+    max_diff = float(np.max(diff))
+    assert max_diff < tolerance, f"Spark parity failed: max diff={max_diff:.2e}"
+
+
+def test_lgb_spark_parity_with_nan(spark, lgb_model, sample_rows):
+    """Verify LightGBM numeric SQL parity in Spark with NaN values."""
+    df = sample_rows.copy()
+    df.iloc[0, 0] = np.nan
+    df.iloc[1, 1] = np.nan
+    _run_spark_sql_parity(spark, lgb_model, df, "temp_lgb_num", tolerance=1e-12)
+
 
 def test_xgb_spark_parity_with_nan(spark, xgb_model, sample_rows):
-    """Verify XGBoost parity in Spark SQL, including NaN handling and float32 alignment."""
+    """Verify XGBoost numeric SQL parity in Spark with NaN values."""
     df = sample_rows.copy()
-    feature_names = list(df.columns)
-    
     df.iloc[0, 0] = np.nan
     df.iloc[1, 1] = np.nan
-    
-    native_probs = xgb_model.predict_proba(df)[:, 1]
-    
-    out = convert(
-        xgb_model,
-        to="sql",
-        dialect="hive",
-        sql_mode="select",
-        table_name="temp_xgb",
-        keep_columns=feature_names
-    )
-    sql_query = out["sql"]["select_sql"]
-    
-    spark.createDataFrame(df).createOrReplaceTempView("temp_xgb")
-    spark_results = spark.sql(sql_query).toPandas()
-    
-    sql_probs = spark_results["score_p"].values
-    
-    diff = np.abs(native_probs - sql_probs)
-    max_diff = np.max(diff)
-    
-    # XGBoost uses float32 internal representation, so we allow a bit more error
-    assert max_diff < 1e-6, f"XGBoost Parity failed: Max Diff {max_diff:.2e}"
+    _run_spark_sql_parity(spark, xgb_model, df, "temp_xgb_num", tolerance=1e-6)
+
+
+def test_lgb_spark_parity_with_categorical_and_missing(
+    spark, lgb_categorical_model, categorical_sample_rows
+):
+    """Verify LightGBM categorical SQL parity in Spark with category missing values."""
+    df = categorical_sample_rows.copy()
+    df.iloc[0, df.columns.get_loc("cat_a")] = np.nan
+    df.iloc[1, df.columns.get_loc("cat_b")] = np.nan
+    _run_spark_sql_parity(spark, lgb_categorical_model, df, "temp_lgb_cat", tolerance=1e-12)
+
+
+def test_xgb_spark_parity_with_categorical_and_missing(
+    spark, xgb_categorical_model, categorical_sample_rows
+):
+    """Verify XGBoost categorical SQL parity in Spark with category missing values."""
+    df = categorical_sample_rows.copy()
+    df.iloc[0, df.columns.get_loc("cat_a")] = np.nan
+    df.iloc[1, df.columns.get_loc("cat_b")] = np.nan
+    _run_spark_sql_parity(spark, xgb_categorical_model, df, "temp_xgb_cat", tolerance=1e-6)

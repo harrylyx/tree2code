@@ -64,7 +64,7 @@ def _render_node(lines: List[str], node: TreeNode, depth: int) -> None:
         op = "<=" if node.operator == "<=" else "<"
         cmp_expr = (
             f"_safe_numeric_compare(v, {_fmt_num(node.threshold)}, {op!r}, "
-            f"{repr(bool(node.float32_compare))})"
+            f"{repr(bool(node.float32_compare))}, {node.missing_type!r})"
         )
 
         if node.default_left:
@@ -151,7 +151,17 @@ def render_python(
     lines.append(f"{_indent(1)}return False")
     lines.append("")
 
-    lines.append("def _safe_numeric_compare(value, threshold, op, use_f32):")
+    lines.append("def _safe_numeric_compare(value, threshold, op, use_f32, missing_type):")
+    lines.append(f"{_indent(1)}if missing_type == 'none':")
+    lines.append(f"{_indent(2)}if value is None:")
+    lines.append(f"{_indent(3)}value = 0.0")
+    lines.append(f"{_indent(2)}else:")
+    lines.append(f"{_indent(3)}try:")
+    lines.append(f"{_indent(4)}parsed = float(value)")
+    lines.append(f"{_indent(3)}except (TypeError, ValueError):")
+    lines.append(f"{_indent(4)}parsed = None")
+    lines.append(f"{_indent(3)}if parsed is not None and math.isnan(parsed):")
+    lines.append(f"{_indent(4)}value = 0.0")
     lines.append(f"{_indent(1)}try:")
     lines.append(f"{_indent(2)}left = _f32(value) if use_f32 else float(value)")
     lines.append(f"{_indent(1)}except (TypeError, ValueError):")

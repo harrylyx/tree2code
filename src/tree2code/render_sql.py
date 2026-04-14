@@ -117,6 +117,16 @@ def _not_missing_expr(column: str, missing_type: str, dialect: str) -> str:
     return f"(not {_missing_expr(column, missing_type, dialect)})"
 
 
+def _none_missing_numeric_expr(column: str, dialect: str) -> str:
+    """Normalize `missing_type=none` numeric value for LightGBM parity.
+
+    LightGBM treats NaN/None as numeric zero in comparisons for this mode.
+    """
+    nan_check = _nan_check_expr(column, dialect)
+    zero = _fmt_num(0.0, dialect)
+    return f"(case when {column} is null or {nan_check} then {zero} else {column} end)"
+
+
 def _render_case_when(
     condition: str,
     true_expr: str,
@@ -185,23 +195,40 @@ def _render_tree(node: TreeNode, dialect: str, depth: int = 0) -> str:
     not_missing = _not_missing_expr(col, node.missing_type, dialect)
 
     if node.split_type == "categorical":
-        cat_match = _categorical_match_expr(col, node.categories or [], dialect)
-        if node.default_left:
-            cond = f"({missing} or ({not_missing} and {cat_match}))"
+        categories = node.categories or []
+        cat_match = _categorical_match_expr(col, categories, dialect)
+
+        # For string categories, NaN checks are not valid in SQL engines
+        # (Spark ANSI and PostgreSQL can throw cast/type errors).
+        if all(_is_numeric_category(v) for v in categories):
+            cat_missing = missing
+            cat_not_missing = not_missing
+        elif node.missing_type == "none":
+            cat_missing = "false"
+            cat_not_missing = "true"
         else:
-            cond = f"({not_missing} and {cat_match})"
+            cat_missing = f"({col} is null)"
+            cat_not_missing = f"({col} is not null)"
+
+        if node.default_left:
+            cond = f"({cat_missing} or ({cat_not_missing} and {cat_match}))"
+        else:
+            cond = f"({cat_not_missing} and {cat_match})"
     else:
         assert node.threshold is not None
         threshold = _fmt_split_threshold(node.threshold, dialect)
         op = "<=" if node.operator == "<=" else "<"
+        compare_col = col
+        if node.missing_type == "none":
+            compare_col = _none_missing_numeric_expr(col, dialect)
 
         if node.float32_compare:
             cmp_expr = (
-                f"{_float32_cast_expr(col, dialect)} {op} "
+                f"{_float32_cast_expr(compare_col, dialect)} {op} "
                 f"{_float32_cast_expr(threshold, dialect)}"
             )
         else:
-            cmp_expr = f"{col} {op} {threshold}"
+            cmp_expr = f"{compare_col} {op} {threshold}"
 
         if node.default_left:
             cond = f"({missing} or ({not_missing} and {cmp_expr}))"
