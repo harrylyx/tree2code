@@ -3,7 +3,7 @@
 `tree2code` 是一个轻量工具：把 XGBoost / LightGBM 二分类树模型转换成 SQL 和纯 Python 打分代码。
 
 当前能力：
-- 支持模型：XGBoost、LightGBM（二分类，数值特征）
+- 支持模型：XGBoost、LightGBM（二分类，数值 + 类别特征）
 - 支持输出：
   - SQL（PostgreSQL、Hive）
   - 纯 Python 评分函数
@@ -138,3 +138,50 @@ python3 scripts/run_version_matrix.py --output matrix_report.json
 - `Release`：打 tag 后自动构建 wheel/sdist 并上传到 GitHub Release
 
 详见：`docs/CI_CD.md`
+
+## 9. test_data 全量对齐报告
+
+按 `idx` 去重后，跑原模型 / 生成 Python / 生成 SQL 三方对齐，并输出报告：
+
+```bash
+python3 scripts/run_testdata_parity.py --output docs/testdata_parity_report.md
+```
+
+## 10. LGB SQL 一致性对比（tree2code vs treemodel2sql）
+
+```bash
+python3 scripts/compare_lgb_sql_consistency.py \
+  --model-path test_data/lgb_model.pkl \
+  --keep-columns idx \
+  --table-name input_table
+```
+
+## 11. 两份 SQL 按树对比（逐棵树数值差异）
+
+输入任意两份 SQL 文件，按树索引比较每棵树里的数值差异（哪些值只在 A 出现、只在 B 出现、近似相等但文本不一致）：
+
+```bash
+python3 scripts/compare_sql_tree_values.py \
+  --sql-a docs/sql_compare/lgb_tree2code_hive.sql \
+  --sql-b docs/sql_compare/lgb_treemodel2sql.sql \
+  --name-a tree2code \
+  --name-b treemodel2sql
+```
+
+默认输出：
+- `docs/sql_compare/sql_tree_value_diff_report.md`
+- `docs/sql_compare/sql_tree_value_diff_report.json`
+
+## 12. PySpark 对齐测试（原模型为金标准）
+
+使用 Spark 本地模式执行两份 SQL（`tree2code` 和 `treemodel2sql`），与原生 LightGBM 预测做逐行对齐：
+
+```bash
+python3 scripts/run_pyspark_parity.py \
+  --data-path test_data/all_data.pq \
+  --model-path test_data/lgb_model.pkl
+```
+
+默认输出：
+- `docs/pyspark_parity_report.md`
+- `docs/pyspark_parity_report.json`

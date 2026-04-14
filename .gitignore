@@ -6,3 +6,5 @@ matrix_report.json
 .DS_Store
 treemodel2sql/
 .env
+test_data/
+scratch/

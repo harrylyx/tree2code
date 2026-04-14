@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from .ir import ModelIR, TreeNode
 from .scoring import AbnormalSpec, ScoreSpec
@@ -46,20 +46,31 @@ def _render_node(lines: List[str], node: TreeNode, depth: int) -> None:
         return
 
     assert node.feature is not None
-    assert node.threshold is not None
     assert node.left is not None
     assert node.right is not None
 
     lines.append(f"{prefix}v = row.get({node.feature!r})")
     lines.append(f"{prefix}missing = _is_missing(v, {node.missing_type!r})")
 
-    op = "<=" if node.operator == "<=" else "<"
-    cmp_expr = f"v {op} {_fmt_num(node.threshold)}"
-
-    if node.default_left:
-        cond = f"missing or ((not missing) and ({cmp_expr}))"
+    if node.split_type == "categorical":
+        categories = tuple(node.categories or [])
+        lines.append(f"{prefix}cat_hit = _in_categories(v, {categories!r})")
+        if node.default_left:
+            cond = "missing or ((not missing) and cat_hit)"
+        else:
+            cond = "(not missing) and cat_hit"
     else:
-        cond = f"(not missing) and ({cmp_expr})"
+        assert node.threshold is not None
+        op = "<=" if node.operator == "<=" else "<"
+        cmp_expr = (
+            f"_safe_numeric_compare(v, {_fmt_num(node.threshold)}, {op!r}, "
+            f"{repr(bool(node.float32_compare))})"
+        )
+
+        if node.default_left:
+            cond = f"missing or ((not missing) and ({cmp_expr}))"
+        else:
+            cond = f"(not missing) and ({cmp_expr})"
 
     lines.append(f"{prefix}if {cond}:")
     _render_node(lines, node.left, depth + 1)
@@ -126,21 +137,59 @@ def render_python(
         lines.append("")
 
     lines.append("def _is_missing(value, missing_type):")
+    lines.append(f"{_indent(1)}if missing_type == 'none':")
+    lines.append(f"{_indent(2)}return False")
     lines.append(f"{_indent(1)}if value is None:")
     lines.append(f"{_indent(2)}return True")
-    lines.append(f"{_indent(1)}if isinstance(value, float) and math.isnan(value):")
-    lines.append(f"{_indent(2)}return True")
+    lines.append(f"{_indent(1)}try:")
+    lines.append(f"{_indent(2)}if math.isnan(float(value)):")
+    lines.append(f"{_indent(3)}return True")
+    lines.append(f"{_indent(1)}except (TypeError, ValueError):")
+    lines.append(f"{_indent(2)}pass")
     lines.append(f"{_indent(1)}if missing_type == 'zero' and value == 0:")
     lines.append(f"{_indent(2)}return True")
     lines.append(f"{_indent(1)}return False")
     lines.append("")
 
-    if ir.model_type == "xgboost":
-        lines.append("def _f32(value):")
-        lines.append(
-            f"{_indent(1)}return struct.unpack('!f', struct.pack('!f', float(value)))[0]"
-        )
-        lines.append("")
+    lines.append("def _safe_numeric_compare(value, threshold, op, use_f32):")
+    lines.append(f"{_indent(1)}try:")
+    lines.append(f"{_indent(2)}left = _f32(value) if use_f32 else float(value)")
+    lines.append(f"{_indent(1)}except (TypeError, ValueError):")
+    lines.append(f"{_indent(2)}return False")
+    lines.append(f"{_indent(1)}right = _f32(threshold) if use_f32 else float(threshold)")
+    lines.append(f"{_indent(1)}if math.isnan(left):")
+    lines.append(f"{_indent(2)}return False")
+    lines.append(f"{_indent(1)}if op == '<=':")
+    lines.append(f"{_indent(2)}return left <= right")
+    lines.append(f"{_indent(1)}return left < right")
+    lines.append("")
+
+    lines.append("def _normalize_category(value):")
+    lines.append(f"{_indent(1)}if hasattr(value, 'item'):")
+    lines.append(f"{_indent(2)}try:")
+    lines.append(f"{_indent(3)}value = value.item()")
+    lines.append(f"{_indent(2)}except Exception:")
+    lines.append(f"{_indent(3)}pass")
+    lines.append(f"{_indent(1)}if isinstance(value, bool):")
+    lines.append(f"{_indent(2)}return value")
+    lines.append(f"{_indent(1)}if isinstance(value, int):")
+    lines.append(f"{_indent(2)}return value")
+    lines.append(f"{_indent(1)}if isinstance(value, float):")
+    lines.append(f"{_indent(2)}if value.is_integer():")
+    lines.append(f"{_indent(3)}return int(value)")
+    lines.append(f"{_indent(2)}return value")
+    lines.append(f"{_indent(1)}return value")
+    lines.append("")
+
+    lines.append("def _in_categories(value, categories):")
+    lines.append(f"{_indent(1)}return _normalize_category(value) in categories")
+    lines.append("")
+
+    lines.append("def _f32(value):")
+    lines.append(
+        f"{_indent(1)}return struct.unpack('!f', struct.pack('!f', float(value)))[0]"
+    )
+    lines.append("")
 
     if score_spec is not None:
         lines.append("def _round_half_up(value, scale):")
@@ -179,13 +228,18 @@ def render_python(
         else:
             lines.append(f"{_indent(2)}return {{'score_p': {abnormal_literal}}}")
 
-    lines.append(f"{_indent(1)}margin = {_fmt_num(ir.base_margin)}")
-    for idx in range(len(ir.trees)):
-        lines.append(f"{_indent(1)}margin += _tree_{idx}(row)")
-
-    lines.append(f"{_indent(1)}score_p = 1.0 / (1.0 + math.exp(-margin))")
     if ir.model_type == "xgboost":
-        lines.append(f"{_indent(1)}score_p = _f32(score_p)")
+        lines.append(f"{_indent(1)}margin = _f32({_fmt_num(ir.base_margin)})")
+        for idx in range(len(ir.trees)):
+            lines.append(
+                f"{_indent(1)}margin = _f32(margin + _f32(_tree_{idx}(row)))"
+            )
+        lines.append(f"{_indent(1)}score_p = _f32(1.0 / (1.0 + math.exp(-margin)))")
+    else:
+        lines.append(f"{_indent(1)}margin = {_fmt_num(ir.base_margin)}")
+        for idx in range(len(ir.trees)):
+            lines.append(f"{_indent(1)}margin += _tree_{idx}(row)")
+        lines.append(f"{_indent(1)}score_p = 1.0 / (1.0 + math.exp(-margin))")
 
     if score_spec is not None:
         lines.append(f"{_indent(1)}score = _probability_to_score(score_p)")

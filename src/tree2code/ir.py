@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import struct
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -11,22 +12,28 @@ class TreeNode:
 
     Attributes:
         feature: The name of the feature to split on.
-        threshold: The threshold value for the split.
+        split_type: The split kind ('numeric' or 'categorical').
+        threshold: The threshold value for numeric split.
+        categories: Accepted category values for categorical split.
         left: The left child node (typically the 'True' branch).
         right: The right child node (typically the 'False' branch).
         default_left: Whether to go left if the feature value is missing.
         operator: The comparison operator (e.g., '<', '<=').
-        missing_type: How missing values are represented ('nan' or 'zero').
+        missing_type: How missing values are represented ('nan', 'zero', or 'none').
+        float32_compare: Whether numeric comparison should use float32 alignment.
         leaf_value: The value to return if this is a leaf node.
     """
 
     feature: Optional[str] = None
+    split_type: str = "numeric"
     threshold: Optional[float] = None
+    categories: Optional[List[Any]] = None
     left: Optional["TreeNode"] = None
     right: Optional["TreeNode"] = None
     default_left: bool = True
     operator: str = "<"
     missing_type: str = "nan"
+    float32_compare: bool = False
     leaf_value: Optional[float] = None
 
     @property
@@ -57,18 +64,80 @@ def _is_missing(value: Any, missing_type: str) -> bool:
 
     Args:
         value: The value to check.
-        missing_type: The type of missingness to check for ('nan' or 'zero').
+        missing_type: The type of missingness to check for ('nan', 'zero', or 'none').
 
     Returns:
         bool: True if the value is missing.
     """
+    if missing_type == "none":
+        return False
+
     if value is None:
         return True
-    if isinstance(value, float) and math.isnan(value):
-        return True
+
+    try:
+        if math.isnan(float(value)):
+            return True
+    except (TypeError, ValueError):
+        pass
+
     if missing_type == "zero" and value == 0:
         return True
+
     return False
+
+
+def _normalize_category_value(value: Any) -> Any:
+    """Normalize category value for robust categorical membership matching."""
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except Exception:
+            pass
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        return value
+    return value
+
+
+def _float32(value: Any) -> float:
+    """Convert value to float32 precision in pure Python."""
+    return struct.unpack("!f", struct.pack("!f", float(value)))[0]
+
+
+def _eval_numeric_branch(node: TreeNode, value: Any) -> bool:
+    """Evaluate numeric split condition for one non-missing value."""
+    assert node.threshold is not None
+
+    try:
+        if node.float32_compare:
+            left_value = _float32(value)
+            threshold = _float32(node.threshold)
+        else:
+            left_value = float(value)
+            threshold = float(node.threshold)
+    except (TypeError, ValueError):
+        return False
+
+    if math.isnan(left_value):
+        return False
+
+    if node.operator == "<=":
+        return left_value <= threshold
+    return left_value < threshold
+
+
+def _eval_categorical_branch(node: TreeNode, value: Any) -> bool:
+    """Evaluate categorical split condition for one non-missing value."""
+    categories = node.categories or []
+    normalized = _normalize_category_value(value)
+    return normalized in categories
 
 
 def eval_tree(node: TreeNode, row: Dict[str, Any]) -> float:
@@ -87,18 +156,16 @@ def eval_tree(node: TreeNode, row: Dict[str, Any]) -> float:
     assert node.feature is not None
     assert node.left is not None
     assert node.right is not None
-    assert node.threshold is not None
 
     value = row.get(node.feature)
     missing = _is_missing(value, node.missing_type)
 
     if missing:
         go_left = node.default_left
+    elif node.split_type == "categorical":
+        go_left = _eval_categorical_branch(node, value)
     else:
-        if node.operator == "<=":
-            go_left = value <= node.threshold
-        else:
-            go_left = value < node.threshold
+        go_left = _eval_numeric_branch(node, value)
 
     return eval_tree(node.left if go_left else node.right, row)
 
