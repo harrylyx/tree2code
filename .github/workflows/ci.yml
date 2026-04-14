@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  test-main:
+    runs-on: ubuntu-latest
+    env:
+      TREE2CODE_PGHOST: 127.0.0.1
+      TREE2CODE_PGPORT: "5432"
+      TREE2CODE_PGUSER: ci_user
+      TREE2CODE_PGPASSWORD: ci_pass
+      TREE2CODE_PGDATABASE: postgres
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_pass
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_user -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "11"
+
+      - name: Run pytest (full)
+        run: |
+          uv run pytest -q
+
+  matrix-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        backend: ["xgboost", "lightgbm"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Choose package version
+        id: pick
+        shell: bash
+        run: |
+          if [[ "${{ matrix.backend }}" == "xgboost" ]]; then
+            if [[ "${{ matrix.python-version }}" == "3.8" || "${{ matrix.python-version }}" == "3.9" ]]; then
+              echo "package_spec=xgboost==2.1.4" >> "$GITHUB_OUTPUT"
+            else
+              echo "package_spec=xgboost==3.2.0" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "package_spec=lightgbm==4.6.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run smoke
+        run: |
+          uv run --isolated \
+            --python ${{ matrix.python-version }} \
+            --with numpy --with pandas --with scikit-learn \
+            --with "${{ steps.pick.outputs.package_spec }}" \
+            python scripts/matrix_smoke.py --backend "${{ matrix.backend }}"
