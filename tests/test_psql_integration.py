@@ -11,7 +11,9 @@ def _prepare_table(conn, table_name, frame):
     with conn.cursor() as cur:
         cur.execute(f"drop table if exists {table_name}")
         cols = [f'"{c}" double precision' for c in frame.columns]
-        cur.execute(f"create table {table_name} (id bigint primary key, {', '.join(cols)})")
+        cur.execute(
+            f"create table {table_name} (id bigint primary key, {', '.join(cols)})"
+        )
         rows = []
         for idx, row in frame.iterrows():
             rows.append((idx, *[float(row[c]) for c in frame.columns]))
@@ -48,9 +50,7 @@ def _pg_dsn() -> str:
             "PostgreSQL integration test skipped. Missing env: " + ", ".join(missing)
         )
 
-    return (
-        f"host={host} port={port} user={user} password={password} dbname={database}"
-    )
+    return f"host={host} port={port} user={user} password={password} dbname={database}"
 
 
 def test_xgb_sql_matches_python_and_score_rule(xgb_model, sample_rows, score_params):
@@ -81,7 +81,9 @@ def test_xgb_sql_matches_python_and_score_rule(xgb_model, sample_rows, score_par
     by_id = {row[0]: row for row in rows}
     for idx in range(len(sample_rows)):
         _, score_p, score = by_id[idx]
-        assert math.isclose(float(score_p), float(ref_prob[idx]), rel_tol=0.0, abs_tol=1e-7)
+        assert math.isclose(
+            float(score_p), float(ref_prob[idx]), rel_tol=0.0, abs_tol=1e-7
+        )
         assert float(f"{score:.3f}") == float(score)
 
 
@@ -113,5 +115,7 @@ def test_lgb_sql_matches_python_and_score_rule(lgb_model, sample_rows, score_par
     by_id = {row[0]: row for row in rows}
     for idx in range(len(sample_rows)):
         _, score_p, score = by_id[idx]
-        assert math.isclose(float(score_p), float(ref_prob[idx]), rel_tol=0.0, abs_tol=1e-12)
+        assert math.isclose(
+            float(score_p), float(ref_prob[idx]), rel_tol=0.0, abs_tol=1e-12
+        )
         assert float(f"{score:.3f}") == float(score)

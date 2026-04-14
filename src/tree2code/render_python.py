@@ -7,14 +7,37 @@ from .scoring import AbnormalSpec, ScoreSpec
 
 
 def _fmt_num(value: float) -> str:
+    """Format a float to a high-precision string.
+
+    Args:
+        value: The float to format.
+
+    Returns:
+        str: The formatted string.
+    """
     return format(float(value), ".17g")
 
 
 def _indent(level: int) -> str:
+    """Return a string of spaces for the given indentation level.
+
+    Args:
+        level: Number of levels (4 spaces each).
+
+    Returns:
+        str: The indentation string.
+    """
     return " " * (4 * level)
 
 
 def _render_node(lines: List[str], node: TreeNode, depth: int) -> None:
+    """Recursively render a tree node into Python code lines.
+
+    Args:
+        lines: The list to append generated Python lines to.
+        node: The tree node to render.
+        depth: Current indentation depth.
+    """
     prefix = _indent(depth)
 
     if node.is_leaf:
@@ -44,7 +67,18 @@ def _render_node(lines: List[str], node: TreeNode, depth: int) -> None:
     _render_node(lines, node.right, depth + 1)
 
 
-def _abnormal_python_condition(feature_names: List[str], abnormal_spec: AbnormalSpec) -> Optional[str]:
+def _abnormal_python_condition(
+    feature_names: List[str], abnormal_spec: AbnormalSpec
+) -> Optional[str]:
+    """Generate the Python condition for checking abnormal rules.
+
+    Args:
+        feature_names: List of all feature names in the model.
+        abnormal_spec: The abnormal rule specification.
+
+    Returns:
+        Optional[str]: The Python boolean expression, or None if no rule is active.
+    """
     if not abnormal_spec.active or not feature_names:
         return None
 
@@ -54,7 +88,10 @@ def _abnormal_python_condition(feature_names: List[str], abnormal_spec: Abnormal
 
     if abnormal_spec.rule == "all_default":
         assert abnormal_spec.default_fill_value is not None
-        checks = [f"row.get({name!r}) == {_fmt_num(float(abnormal_spec.default_fill_value))}" for name in feature_names]
+        checks = [
+            f"row.get({name!r}) == {_fmt_num(float(abnormal_spec.default_fill_value))}"
+            for name in feature_names
+        ]
         return " and ".join(checks)
 
     return None
@@ -65,6 +102,16 @@ def render_python(
     score_spec: Optional[ScoreSpec],
     abnormal_spec: AbnormalSpec,
 ) -> str:
+    """Render the model IR into a pure Python scoring script.
+
+    Args:
+        ir: The model intermediate representation.
+        score_spec: Optional scorecard parameters.
+        abnormal_spec: Abnormal rule specification.
+
+    Returns:
+        str: The complete Python source code for scoring.
+    """
     lines: List[str] = []
     lines.append("import math")
     lines.append("import struct")
@@ -90,19 +137,27 @@ def render_python(
 
     if ir.model_type == "xgboost":
         lines.append("def _f32(value):")
-        lines.append(f"{_indent(1)}return struct.unpack('!f', struct.pack('!f', float(value)))[0]")
+        lines.append(
+            f"{_indent(1)}return struct.unpack('!f', struct.pack('!f', float(value)))[0]"
+        )
         lines.append("")
 
     if score_spec is not None:
         lines.append("def _round_half_up(value, scale):")
         lines.append(f"{_indent(1)}quant = Decimal('1').scaleb(-scale)")
-        lines.append(f"{_indent(1)}return float(Decimal(str(value)).quantize(quant, rounding=ROUND_HALF_UP))")
+        lines.append(
+            f"{_indent(1)}return float(Decimal(str(value)).quantize(quant, rounding=ROUND_HALF_UP))"
+        )
         lines.append("")
 
         lines.append("def _probability_to_score(score_p):")
-        lines.append(f"{_indent(1)}p = min(max(float(score_p), _SCORE_EPS), 1.0 - _SCORE_EPS)")
+        lines.append(
+            f"{_indent(1)}p = min(max(float(score_p), _SCORE_EPS), 1.0 - _SCORE_EPS)"
+        )
         lines.append(f"{_indent(1)}odds = p / (1.0 - p)")
-        lines.append(f"{_indent(1)}score = _SCORE_OFFSET - _SCORE_FACTOR * math.log(odds)")
+        lines.append(
+            f"{_indent(1)}score = _SCORE_OFFSET - _SCORE_FACTOR * math.log(odds)"
+        )
         lines.append(f"{_indent(1)}return _round_half_up(score, _SCORE_SCALE)")
         lines.append("")
 
@@ -118,7 +173,9 @@ def render_python(
         abnormal_literal = _fmt_num(float(abnormal_spec.abnormal_value))
         lines.append(f"{_indent(1)}if {abnormal_cond}:")
         if score_spec is not None:
-            lines.append(f"{_indent(2)}return {{'score_p': {abnormal_literal}, 'score': {abnormal_literal}}}")
+            lines.append(
+                f"{_indent(2)}return {{'score_p': {abnormal_literal}, 'score': {abnormal_literal}}}"
+            )
         else:
             lines.append(f"{_indent(2)}return {{'score_p': {abnormal_literal}}}")
 

@@ -5,3 +5,4 @@ __pycache__/
 matrix_report.json
 .DS_Store
 treemodel2sql/
+.env

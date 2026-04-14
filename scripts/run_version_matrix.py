@@ -4,11 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
-
+from typing import Dict, List, Optional, Sequence, Tuple
 
 PYTHON_SERIES = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
@@ -48,7 +46,9 @@ def _run(cmd: Sequence[str], cwd: Path) -> ProbeResult:
         text=True,
         capture_output=True,
     )
-    return ProbeResult(success=(proc.returncode == 0), stdout=proc.stdout, stderr=proc.stderr)
+    return ProbeResult(
+        success=(proc.returncode == 0), stdout=proc.stdout, stderr=proc.stderr
+    )
 
 
 def _find_python(version: str, cwd: Path) -> Optional[str]:
@@ -201,7 +201,9 @@ def run_matrix(cwd: Path) -> Dict[str, object]:
             continue
 
         for backend, pkg_spec in run_specs:
-            smoke = _run_smoke(cwd=cwd, python_path=py_path, backend=backend, package_spec=pkg_spec)
+            smoke = _run_smoke(
+                cwd=cwd, python_path=py_path, backend=backend, package_spec=pkg_spec
+            )
             run_result: Dict[str, object] = {
                 "backend": backend,
                 "package": pkg_spec,
@@ -209,7 +211,9 @@ def run_matrix(cwd: Path) -> Dict[str, object]:
             }
             if smoke.stdout.strip():
                 try:
-                    run_result["output"] = json.loads(smoke.stdout.strip().splitlines()[-1])
+                    run_result["output"] = json.loads(
+                        smoke.stdout.strip().splitlines()[-1]
+                    )
                 except Exception:
                     run_result["output"] = smoke.stdout.strip()
             if not smoke.success:
@@ -237,7 +241,9 @@ def main() -> int:
     output_path = Path(args.output)
     if not output_path.is_absolute():
         output_path = cwd / output_path
-    output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

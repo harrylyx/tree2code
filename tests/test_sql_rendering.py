@@ -32,5 +32,6 @@ def test_sql_select_contains_keep_columns(xgb_model):
         table_name="source_table",
     )
     sql = out["sql"]["select_sql"].lower()
-    assert "select id, group_id" in sql
+    assert '"id"' in sql
+    assert '"group_id"' in sql
     assert "from source_table" in sql

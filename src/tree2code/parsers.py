@@ -8,6 +8,17 @@ from .ir import ModelIR, TreeNode, collect_feature_names
 
 
 def _extract_first_float(value: Any) -> float:
+    """Extract a float from a potentially complex object (like a list in string form).
+
+    Args:
+        value: The value to extract from.
+
+    Returns:
+        float: The extracted float value.
+
+    Raises:
+        ValueError: If extraction fails.
+    """
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, list):
@@ -24,6 +35,14 @@ def _extract_first_float(value: Any) -> float:
 
 
 def _parse_xgb_tree_node(node: Dict[str, Any]) -> TreeNode:
+    """Recursively parse an XGBoost JSON tree node.
+
+    Args:
+        node: The JSON representation of an XGBoost tree node.
+
+    Returns:
+        TreeNode: The parsed IR tree node.
+    """
     if "leaf" in node:
         return TreeNode(leaf_value=float(node["leaf"]))
 
@@ -46,6 +65,18 @@ def _parse_xgb_tree_node(node: Dict[str, Any]) -> TreeNode:
 
 
 def _parse_xgboost(model: Any) -> ModelIR:
+    """Parse an XGBoost model into an IR.
+
+    Args:
+        model: The XGBoost model object.
+
+    Returns:
+        ModelIR: The parsed IR.
+
+    Raises:
+        NotImplementedError: If the model is not a binary classifier.
+        ValueError: If base_score is invalid.
+    """
     booster = model.get_booster() if hasattr(model, "get_booster") else model
 
     config = json.loads(booster.save_config())
@@ -75,6 +106,18 @@ def _parse_xgboost(model: Any) -> ModelIR:
 
 
 def _parse_lgb_tree_node(node: Dict[str, Any], feature_names: List[str]) -> TreeNode:
+    """Recursively parse a LightGBM JSON tree node.
+
+    Args:
+        node: The JSON representation of a LightGBM tree node.
+        feature_names: List of all feature names for mapping indices.
+
+    Returns:
+        TreeNode: The parsed IR tree node.
+
+    Raises:
+        NotImplementedError: If the decision type is not supported.
+    """
     if "leaf_value" in node or "leaf_index" in node:
         return TreeNode(leaf_value=float(node["leaf_value"]))
 
@@ -105,6 +148,17 @@ def _parse_lgb_tree_node(node: Dict[str, Any], feature_names: List[str]) -> Tree
 
 
 def _parse_lightgbm(model: Any) -> ModelIR:
+    """Parse a LightGBM model into an IR.
+
+    Args:
+        model: The LightGBM model object.
+
+    Returns:
+        ModelIR: The parsed IR.
+
+    Raises:
+        NotImplementedError: If the model is not a binary classifier.
+    """
     if hasattr(model, "booster_"):
         booster = model.booster_
     elif hasattr(model, "_Booster"):
@@ -118,7 +172,10 @@ def _parse_lightgbm(model: Any) -> ModelIR:
         raise NotImplementedError("Only binary LightGBM models are supported")
 
     feature_names = list(dump["feature_names"])
-    trees = [_parse_lgb_tree_node(t["tree_structure"], feature_names) for t in dump["tree_info"]]
+    trees = [
+        _parse_lgb_tree_node(t["tree_structure"], feature_names)
+        for t in dump["tree_info"]
+    ]
 
     return ModelIR(
         model_type="lightgbm",
@@ -129,12 +186,29 @@ def _parse_lightgbm(model: Any) -> ModelIR:
 
 
 def parse_model(model: Any) -> ModelIR:
+    """Parse a binary classifier model into an intermediate representation.
+
+    Args:
+        model: The model object (XGBoost or LightGBM).
+
+    Returns:
+        ModelIR: The model in intermediate representation.
+
+    Raises:
+        TypeError: If the model object is not supported.
+    """
     if hasattr(model, "get_booster") or (
         hasattr(model, "save_config") and hasattr(model, "get_dump")
     ):
         return _parse_xgboost(model)
 
-    if hasattr(model, "booster_") or hasattr(model, "_Booster") or hasattr(model, "dump_model"):
+    if (
+        hasattr(model, "booster_")
+        or hasattr(model, "_Booster")
+        or hasattr(model, "dump_model")
+    ):
         return _parse_lightgbm(model)
 
-    raise TypeError("Unsupported model object. Expected XGBoost or LightGBM binary model")
+    raise TypeError(
+        "Unsupported model object. Expected XGBoost or LightGBM binary model"
+    )

@@ -8,7 +8,6 @@ import os
 import sys
 from typing import Dict
 
-
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC_DIR = os.path.join(ROOT_DIR, "src")
 if SRC_DIR not in sys.path:
@@ -16,9 +15,9 @@ if SRC_DIR not in sys.path:
 
 
 def _build_data(seed: int = 2026):
+    import pandas as pd
     from sklearn.datasets import make_classification
     from sklearn.model_selection import train_test_split
-    import pandas as pd
 
     x, y = make_classification(
         n_samples=240,
