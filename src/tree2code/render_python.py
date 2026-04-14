@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+from typing import List, Optional
+
+from .ir import ModelIR, TreeNode
+from .scoring import AbnormalSpec, ScoreSpec
+
+
+def _fmt_num(value: float) -> str:
+    return format(float(value), ".17g")
+
+
+def _indent(level: int) -> str:
+    return " " * (4 * level)
+
+
+def _render_node(lines: List[str], node: TreeNode, depth: int) -> None:
+    prefix = _indent(depth)
+
+    if node.is_leaf:
+        assert node.leaf_value is not None
+        lines.append(f"{prefix}return {_fmt_num(node.leaf_value)}")
+        return
+
+    assert node.feature is not None
+    assert node.threshold is not None
+    assert node.left is not None
+    assert node.right is not None
+
+    lines.append(f"{prefix}v = row.get({node.feature!r})")
+    lines.append(f"{prefix}missing = _is_missing(v, {node.missing_type!r})")
+
+    op = "<=" if node.operator == "<=" else "<"
+    cmp_expr = f"v {op} {_fmt_num(node.threshold)}"
+
+    if node.default_left:
+        cond = f"missing or ((not missing) and ({cmp_expr}))"
+    else:
+        cond = f"(not missing) and ({cmp_expr})"
+
+    lines.append(f"{prefix}if {cond}:")
+    _render_node(lines, node.left, depth + 1)
+    lines.append(f"{prefix}else:")
+    _render_node(lines, node.right, depth + 1)
+
+
+def _abnormal_python_condition(feature_names: List[str], abnormal_spec: AbnormalSpec) -> Optional[str]:
+    if not abnormal_spec.active or not feature_names:
+        return None
+
+    if abnormal_spec.rule == "all_null":
+        checks = [f"_is_missing(row.get({name!r}), 'nan')" for name in feature_names]
+        return " and ".join(checks)
+
+    if abnormal_spec.rule == "all_default":
+        assert abnormal_spec.default_fill_value is not None
+        checks = [f"row.get({name!r}) == {_fmt_num(float(abnormal_spec.default_fill_value))}" for name in feature_names]
+        return " and ".join(checks)
+
+    return None
+
+
+def render_python(
+    ir: ModelIR,
+    score_spec: Optional[ScoreSpec],
+    abnormal_spec: AbnormalSpec,
+) -> str:
+    lines: List[str] = []
+    lines.append("import math")
+    lines.append("import struct")
+    lines.append("from decimal import Decimal, ROUND_HALF_UP")
+    lines.append("")
+
+    if score_spec is not None:
+        lines.append(f"_SCORE_FACTOR = {_fmt_num(score_spec.factor)}")
+        lines.append(f"_SCORE_OFFSET = {_fmt_num(score_spec.offset)}")
+        lines.append(f"_SCORE_SCALE = {int(score_spec.score_scale)}")
+        lines.append(f"_SCORE_EPS = {_fmt_num(score_spec.epsilon)}")
+        lines.append("")
+
+    lines.append("def _is_missing(value, missing_type):")
+    lines.append(f"{_indent(1)}if value is None:")
+    lines.append(f"{_indent(2)}return True")
+    lines.append(f"{_indent(1)}if isinstance(value, float) and math.isnan(value):")
+    lines.append(f"{_indent(2)}return True")
+    lines.append(f"{_indent(1)}if missing_type == 'zero' and value == 0:")
+    lines.append(f"{_indent(2)}return True")
+    lines.append(f"{_indent(1)}return False")
+    lines.append("")
+
+    if ir.model_type == "xgboost":
+        lines.append("def _f32(value):")
+        lines.append(f"{_indent(1)}return struct.unpack('!f', struct.pack('!f', float(value)))[0]")
+        lines.append("")
+
+    if score_spec is not None:
+        lines.append("def _round_half_up(value, scale):")
+        lines.append(f"{_indent(1)}quant = Decimal('1').scaleb(-scale)")
+        lines.append(f"{_indent(1)}return float(Decimal(str(value)).quantize(quant, rounding=ROUND_HALF_UP))")
+        lines.append("")
+
+        lines.append("def _probability_to_score(score_p):")
+        lines.append(f"{_indent(1)}p = min(max(float(score_p), _SCORE_EPS), 1.0 - _SCORE_EPS)")
+        lines.append(f"{_indent(1)}odds = p / (1.0 - p)")
+        lines.append(f"{_indent(1)}score = _SCORE_OFFSET - _SCORE_FACTOR * math.log(odds)")
+        lines.append(f"{_indent(1)}return _round_half_up(score, _SCORE_SCALE)")
+        lines.append("")
+
+    for idx, tree in enumerate(ir.trees):
+        lines.append(f"def _tree_{idx}(row):")
+        _render_node(lines, tree, 1)
+        lines.append("")
+
+    lines.append("def predict_row(row):")
+
+    abnormal_cond = _abnormal_python_condition(ir.feature_names, abnormal_spec)
+    if abnormal_cond is not None:
+        abnormal_literal = _fmt_num(float(abnormal_spec.abnormal_value))
+        lines.append(f"{_indent(1)}if {abnormal_cond}:")
+        if score_spec is not None:
+            lines.append(f"{_indent(2)}return {{'score_p': {abnormal_literal}, 'score': {abnormal_literal}}}")
+        else:
+            lines.append(f"{_indent(2)}return {{'score_p': {abnormal_literal}}}")
+
+    lines.append(f"{_indent(1)}margin = {_fmt_num(ir.base_margin)}")
+    for idx in range(len(ir.trees)):
+        lines.append(f"{_indent(1)}margin += _tree_{idx}(row)")
+
+    lines.append(f"{_indent(1)}score_p = 1.0 / (1.0 + math.exp(-margin))")
+    if ir.model_type == "xgboost":
+        lines.append(f"{_indent(1)}score_p = _f32(score_p)")
+
+    if score_spec is not None:
+        lines.append(f"{_indent(1)}score = _probability_to_score(score_p)")
+        lines.append(f"{_indent(1)}return {{'score_p': score_p, 'score': score}}")
+    else:
+        lines.append(f"{_indent(1)}return {{'score_p': score_p}}")
+
+    return "\n".join(lines) + "\n"

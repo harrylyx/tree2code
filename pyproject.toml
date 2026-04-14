@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tree2code"
+version = "0.1.0"
+description = "Convert XGBoost and LightGBM binary models into SQL and pure Python scoring code."
+readme = "README.md"
+requires-python = ">=3.8,<3.15"
+license = { text = "MIT" }
+authors = [
+  { name = "tree2code contributors" }
+]
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tree2code"]

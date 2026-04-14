@@ -1,0 +1,7 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+matrix_report.json
+.DS_Store
+treemodel2sql/
