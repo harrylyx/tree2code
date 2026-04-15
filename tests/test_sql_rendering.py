@@ -68,10 +68,26 @@ def test_hive_small_split_threshold_is_clamped():
         output_table=None,
         score_spec=None,
         abnormal_spec=AbnormalSpec(),
+        literal_format="standard",
     )["score_p_expr"]
     assert hive_sql is not None
-    assert "1e-13" in hive_sql.lower()
+    assert "0.0000000000001" in hive_sql.lower()
+    assert "1e-13" not in hive_sql.lower()
     assert "1.0000000180025095e-35" not in hive_sql.lower()
+
+    hive_sql_sci = render_sql(
+        ir,
+        dialect="hive",
+        sql_mode="expression",
+        keep_columns=None,
+        table_name="input_table",
+        output_table=None,
+        score_spec=None,
+        abnormal_spec=AbnormalSpec(),
+        literal_format="scientific",
+    )["score_p_expr"]
+    assert hive_sql_sci is not None
+    assert "1e-13" in hive_sql_sci.lower()
 
     psql_sql = render_sql(
         ir,
@@ -115,9 +131,65 @@ def test_missing_type_none_sql_normalizes_nan_to_zero():
         output_table=None,
         score_spec=None,
         abnormal_spec=AbnormalSpec(),
+        literal_format="scientific",
     )["score_p_expr"]
     assert hive_expr is not None
     lower_expr = hive_expr.lower()
     assert "case when" in lower_expr
-    assert "is null or isnan(" in lower_expr
+    assert "cast(" in lower_expr
+    assert "= 'nan'" in lower_expr
     assert "then 0.00000000000000000e+00" in lower_expr
+
+
+def test_hive_literal_formats():
+    ir = ModelIR(
+        model_type="lightgbm",
+        feature_names=["f0"],
+        trees=[
+            TreeNode(
+                feature="f0",
+                split_type="numeric",
+                threshold=0.125,
+                left=TreeNode(leaf_value=0.25),
+                right=TreeNode(leaf_value=-0.5),
+                default_left=True,
+                operator="<=",
+                missing_type="nan",
+            )
+        ],
+        base_margin=0.0,
+    )
+
+    # Standard format: no scientific notation
+    std_expr = render_sql(
+        ir,
+        dialect="hive",
+        sql_mode="expression",
+        keep_columns=None,
+        table_name="t",
+        output_table=None,
+        score_spec=None,
+        abnormal_spec=AbnormalSpec(),
+        literal_format="standard",
+    )["score_p_expr"]
+    assert "0.125" in std_expr
+    assert "0.25" in std_expr
+    assert "-0.5" in std_expr
+    assert "e+" not in std_expr.lower()
+    assert "e-" not in std_expr.lower()
+
+    # Scientific format: forced e notation
+    sci_expr = render_sql(
+        ir,
+        dialect="hive",
+        sql_mode="expression",
+        keep_columns=None,
+        table_name="t",
+        output_table=None,
+        score_spec=None,
+        abnormal_spec=AbnormalSpec(),
+        literal_format="scientific",
+    )["score_p_expr"]
+    # Check for scientific format pattern.
+    assert "e-01" in sci_expr.lower()
+    assert "1.25000000000000000e-01" in sci_expr.lower()

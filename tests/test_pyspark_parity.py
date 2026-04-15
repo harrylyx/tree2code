@@ -9,12 +9,17 @@ def _run_spark_sql_parity(
     frame: pd.DataFrame,
     table_name: str,
     tolerance: float,
+    *,
+    literal_format: str = "scientific",
+    spark_nan_as_null: bool = False,
 ) -> None:
     """Run SQL in Spark and compare score_p against native model output by explicit row id."""
     native_input = frame.reset_index(drop=True).copy()
     native_probs = model.predict_proba(native_input)[:, 1]
 
     spark_input = native_input.copy()
+    if spark_nan_as_null:
+        spark_input = spark_input.astype(object).where(pd.notna(spark_input), None)
     spark_input.insert(0, "__row_id", np.arange(len(spark_input), dtype=int))
 
     # Spark handles object/string columns better than pandas Categorical directly.
@@ -28,6 +33,7 @@ def _run_spark_sql_parity(
         to="sql",
         dialect="hive",
         sql_mode="select",
+        literal_format=literal_format,
         table_name=table_name,
         keep_columns=["__row_id"],
     )
@@ -67,6 +73,36 @@ def test_xgb_spark_parity_with_nan(spark, xgb_model, sample_rows):
     df.iloc[0, 0] = np.nan
     df.iloc[1, 1] = np.nan
     _run_spark_sql_parity(spark, xgb_model, df, "temp_xgb_num", tolerance=1e-6)
+
+
+def test_xgb_spark_parity_with_standard_literals(spark, xgb_model, sample_rows):
+    """Verify Hive SQL executes and aligns in non-scientific literal format."""
+    df = sample_rows.head(300).copy()
+    df.iloc[0, 0] = np.nan
+    df.iloc[1, 1] = np.nan
+    _run_spark_sql_parity(
+        spark,
+        xgb_model,
+        df,
+        "temp_xgb_num_std",
+        tolerance=1e-6,
+        literal_format="standard",
+    )
+
+
+def test_lgb_spark_parity_with_standard_literals(spark, lgb_model, sample_rows):
+    """Verify LightGBM aligns in non-scientific literal format."""
+    df = sample_rows.head(300).copy()
+    df.iloc[0, 0] = np.nan
+    df.iloc[1, 1] = np.nan
+    _run_spark_sql_parity(
+        spark,
+        lgb_model,
+        df,
+        "temp_lgb_num_std",
+        tolerance=1e-12,
+        literal_format="standard",
+    )
 
 
 def test_lgb_spark_parity_with_categorical_and_missing(

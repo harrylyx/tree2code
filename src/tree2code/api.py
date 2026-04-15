@@ -41,6 +41,7 @@ def convert(
     *,
     dialect: str = "psql",
     sql_mode: str = "expression",
+    literal_format: str = "standard",
     keep_columns: Optional[Sequence[str]] = None,
     table_name: str = "data_table",
     output_table: Optional[str] = None,
@@ -63,6 +64,10 @@ def convert(
             - 'select': Returns a SELECT statement.
             - 'ddl': Returns a full DROP + CREATE TABLE AS SELECT statement.
             Defaults to "expression".
+        literal_format: Literal formatting mode. One of:
+            - 'standard': Standard numeric formatting (e.g., 0.1).
+            - 'scientific': Scientific notation (e.g., 1.0e-01), forcing DOUBLE parsing in Spark.
+            Defaults to "standard".
         keep_columns: Columns to include in the SELECT/DDL statement.
         table_name: Source table name for SELECT/DDL. Defaults to "data_table".
         output_table: Target table name for DDL mode. Defaults to "output_table".
@@ -108,6 +113,7 @@ def convert(
             output_table=output_table,
             score_spec=score_spec,
             abnormal_spec=abnormal_spec,
+            literal_format=literal_format,
         )
 
     if "python" in outputs:

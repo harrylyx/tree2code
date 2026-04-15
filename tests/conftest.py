@@ -161,7 +161,7 @@ def spark():
     spark = SparkSession.builder \
         .appName("Tree2CodeTest") \
         .master("local[1]") \
-        .config("spark.driver.memory", "2g") \
+        .config("spark.driver.memory", "8g") \
         .config("spark.driver.bindAddress", "127.0.0.1") \
         .config("spark.driver.host", "127.0.0.1") \
         .config("spark.sql.warehouse.dir", warehouse_dir) \

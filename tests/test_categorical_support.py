@@ -150,4 +150,7 @@ def test_sql_missing_expression_contains_nan_check(xgb_model):
 
     out_hive = convert(xgb_model, to="sql", dialect="hive", sql_mode="expression")
     expr_hive = out_hive["sql"]["score_p_expr"]
-    assert "isnan(" in expr_hive
+    assert "isnan(" not in expr_hive.lower()
+    assert "is null" in expr_hive.lower()
+    assert "cast(" in expr_hive.lower()
+    assert "= 'nan'" in expr_hive.lower()

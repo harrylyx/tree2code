@@ -117,8 +117,9 @@ uv run pytest tests/test_pyspark_parity.py -q
 ```
 
 该测试覆盖了：
-- **NaN 鲁棒性**：验证 `isnull` / `isnan` 逻辑是否能正确路由缺失值。
+- **Hive 兼容缺失值口径**：Hive 路径不依赖 `isnan`，通过字符串判定兼容 `NaN`/`NULL`。
 - **双精度对齐**：验证科学计数法字面量是否能强制 Spark 使用 DOUBLE 路径，避免 10^-6 级的误差。
+- **字面量格式覆盖**：同时覆盖 `literal_format="standard"` 和 `literal_format="scientific"`。
 - **类别分裂对齐**：验证类别命中分支与类别缺失值分支的 SQL 执行结果。
 
 ### 6.3 PostgreSQL 集成测试

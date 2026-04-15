@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
 from .ir import ModelIR, TreeNode
@@ -8,24 +9,52 @@ from .scoring import AbnormalSpec, ScoreSpec
 HIVE_MIN_NONZERO_THRESHOLD = 1e-13
 
 
-def _fmt_num(value: float, dialect: str) -> str:
+def _format_hive_standard(value: float) -> str:
+    """Format Hive standard literal without scientific notation."""
+    text = format(float(value), ".17g")
+    if "e" in text.lower():
+        text = format(Decimal(text), "f")
+
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    if text in {"", "-0"}:
+        return "0"
+    return text
+
+
+def _fmt_num(value: float, dialect: str, literal_format: str = "standard") -> str:
     """Format a float to a high-precision string.
 
     Args:
         value: The float to format.
         dialect: SQL dialect ('psql' or 'hive').
+        literal_format: Literal formatting mode ('standard' or 'scientific').
 
     Returns:
         str: The formatted string.
     """
     if dialect == "hive":
-        # Using scientific notation to force Spark to parse as DOUBLE
-        # otherwise a literal like 0.1 is parsed as DECIMAL.
-        return format(float(value), ".17e")
+        if literal_format == "scientific":
+            # Using scientific notation to force Spark to parse as DOUBLE
+            # otherwise a literal like 0.1 is parsed as DECIMAL.
+            return format(float(value), ".17e")
+        return _format_hive_standard(float(value))
     return format(float(value), ".17g")
 
 
-def _fmt_split_threshold(value: float, dialect: str) -> str:
+def _as_double_literal(expr: str, dialect: str, literal_format: str) -> str:
+    """Wrap literal as DOUBLE in Hive standard mode."""
+    if dialect == "hive" and literal_format == "standard":
+        return f"cast({expr} as double)"
+    return expr
+
+
+def _numeric_literal(value: float, dialect: str, literal_format: str) -> str:
+    """Render numeric literal with dialect/literal-format semantics."""
+    return _fmt_num(value, dialect, literal_format)
+
+
+def _fmt_split_threshold(value: float, dialect: str, literal_format: str) -> str:
     """Format numeric split threshold with dialect-specific safeguards."""
     threshold = float(value)
     if (
@@ -33,8 +62,10 @@ def _fmt_split_threshold(value: float, dialect: str) -> str:
         and threshold != 0.0
         and abs(threshold) < HIVE_MIN_NONZERO_THRESHOLD
     ):
+        if literal_format == "standard":
+            return "0.0000000000001" if threshold > 0 else "-0.0000000000001"
         return "1e-13" if threshold > 0 else "-1e-13"
-    return _fmt_num(threshold, dialect)
+    return _fmt_num(threshold, dialect, literal_format)
 
 
 def _quote_ident(name: str, dialect: str) -> str:
@@ -88,17 +119,19 @@ def _float32_cast_expr(expr: str, dialect: str) -> str:
 def _nan_check_expr(column: str, dialect: str) -> str:
     """Generate a dialect-specific SQL expression to detect NaN.
 
-    The naive ``col <> col`` trick does NOT work in PostgreSQL or
-    Spark/Hive because both engines treat ``NaN = NaN`` as *true*
-    (non-IEEE-754 semantics), so ``col <> col`` returns *false*
-    for NaN values.
+    For Hive, avoid `isnan()` and detect NaN via string cast for compatibility.
     """
     if dialect == "psql":
         return f"({column} = 'NaN'::double precision)"
-    return f"isnan({column})"
+    return f"(lower(cast(({column}) as string)) = 'nan')"
 
 
-def _missing_expr(column: str, missing_type: str, dialect: str) -> str:
+def _missing_expr(
+    column: str,
+    missing_type: str,
+    dialect: str,
+    literal_format: str,
+) -> str:
     """Generate SQL expression for missing-value check.
 
     This treats both NULL and NaN as missing.
@@ -107,23 +140,29 @@ def _missing_expr(column: str, missing_type: str, dialect: str) -> str:
         return "false"
 
     nan_check = _nan_check_expr(column, dialect)
+    zero_literal = _numeric_literal(0.0, dialect, literal_format)
     if missing_type == "zero":
-        return f"({column} is null or {nan_check} or {column} = 0)"
+        return f"({column} is null or {nan_check} or {column} = {zero_literal})"
     return f"({column} is null or {nan_check})"
 
 
-def _not_missing_expr(column: str, missing_type: str, dialect: str) -> str:
+def _not_missing_expr(
+    column: str,
+    missing_type: str,
+    dialect: str,
+    literal_format: str,
+) -> str:
     """Generate SQL expression for non-missing-value check."""
-    return f"(not {_missing_expr(column, missing_type, dialect)})"
+    return f"(not {_missing_expr(column, missing_type, dialect, literal_format)})"
 
 
-def _none_missing_numeric_expr(column: str, dialect: str) -> str:
+def _none_missing_numeric_expr(column: str, dialect: str, literal_format: str) -> str:
     """Normalize `missing_type=none` numeric value for LightGBM parity.
 
     LightGBM treats NaN/None as numeric zero in comparisons for this mode.
     """
     nan_check = _nan_check_expr(column, dialect)
-    zero = _fmt_num(0.0, dialect)
+    zero = _numeric_literal(0.0, dialect, literal_format)
     return f"(case when {column} is null or {nan_check} then {zero} else {column} end)"
 
 
@@ -156,13 +195,17 @@ def _is_numeric_category(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _categorical_match_expr(column: str, categories: Sequence[Any], dialect: str) -> str:
+def _categorical_match_expr(
+    column: str, categories: Sequence[Any], dialect: str, literal_format: str
+) -> str:
     """Render SQL membership check for categorical split."""
     if not categories:
         return "false"
 
     if all(_is_numeric_category(v) for v in categories):
-        literals = ", ".join(_fmt_num(float(v), dialect) for v in categories)
+        literals = ", ".join(
+            _numeric_literal(float(v), dialect, literal_format) for v in categories
+        )
         return f"{column} in ({literals})"
 
     casted = _cast_text(column, dialect)
@@ -170,12 +213,15 @@ def _categorical_match_expr(column: str, categories: Sequence[Any], dialect: str
     return f"{casted} in ({literals})"
 
 
-def _render_tree(node: TreeNode, dialect: str, depth: int = 0) -> str:
+def _render_tree(
+    node: TreeNode, dialect: str, literal_format: str, depth: int = 0
+) -> str:
     """Recursively render a tree node into SQL CASE WHEN expressions.
 
     Args:
         node: The tree node to render.
         dialect: SQL dialect.
+        literal_format: Literal formatting mode.
         depth: Current indentation depth.
 
     Returns:
@@ -183,7 +229,7 @@ def _render_tree(node: TreeNode, dialect: str, depth: int = 0) -> str:
     """
     if node.is_leaf:
         assert node.leaf_value is not None
-        return _fmt_num(node.leaf_value, dialect)
+        return _numeric_literal(node.leaf_value, dialect, literal_format)
 
     assert node.feature is not None
     assert node.left is not None
@@ -191,12 +237,12 @@ def _render_tree(node: TreeNode, dialect: str, depth: int = 0) -> str:
 
     col = _quote_ident(node.feature, dialect)
 
-    missing = _missing_expr(col, node.missing_type, dialect)
-    not_missing = _not_missing_expr(col, node.missing_type, dialect)
+    missing = _missing_expr(col, node.missing_type, dialect, literal_format)
+    not_missing = _not_missing_expr(col, node.missing_type, dialect, literal_format)
 
     if node.split_type == "categorical":
         categories = node.categories or []
-        cat_match = _categorical_match_expr(col, categories, dialect)
+        cat_match = _categorical_match_expr(col, categories, dialect, literal_format)
 
         # For string categories, NaN checks are not valid in SQL engines
         # (Spark ANSI and PostgreSQL can throw cast/type errors).
@@ -216,11 +262,15 @@ def _render_tree(node: TreeNode, dialect: str, depth: int = 0) -> str:
             cond = f"({cat_not_missing} and {cat_match})"
     else:
         assert node.threshold is not None
-        threshold = _fmt_split_threshold(node.threshold, dialect)
+        threshold = _as_double_literal(
+            _fmt_split_threshold(node.threshold, dialect, literal_format),
+            dialect,
+            literal_format,
+        )
         op = "<=" if node.operator == "<=" else "<"
         compare_col = col
         if node.missing_type == "none":
-            compare_col = _none_missing_numeric_expr(col, dialect)
+            compare_col = _none_missing_numeric_expr(col, dialect, literal_format)
 
         if node.float32_compare:
             cmp_expr = (
@@ -235,8 +285,8 @@ def _render_tree(node: TreeNode, dialect: str, depth: int = 0) -> str:
         else:
             cond = f"({not_missing} and {cmp_expr})"
 
-    left_expr = _render_tree(node.left, dialect, depth + 1)
-    right_expr = _render_tree(node.right, dialect, depth + 1)
+    left_expr = _render_tree(node.left, dialect, literal_format, depth + 1)
+    right_expr = _render_tree(node.right, dialect, literal_format, depth + 1)
     return _render_case_when(cond, left_expr, right_expr, depth=depth, wrap=True)
 
 
@@ -244,6 +294,7 @@ def _build_abnormal_condition(
     feature_names: Sequence[str],
     dialect: str,
     abnormal_spec: AbnormalSpec,
+    literal_format: str,
 ) -> Optional[str]:
     """Generate the SQL condition for checking abnormal rules.
 
@@ -264,12 +315,14 @@ def _build_abnormal_condition(
     cols = [_quote_ident(name, dialect) for name in feature_names]
 
     if abnormal_spec.rule == "all_null":
-        checks = [_missing_expr(col, "nan", dialect) for col in cols]
+        checks = [_missing_expr(col, "nan", dialect, literal_format) for col in cols]
         return " and ".join(f"({check})" for check in checks)
 
     if abnormal_spec.rule == "all_default":
         assert abnormal_spec.default_fill_value is not None
-        default_literal = _fmt_num(float(abnormal_spec.default_fill_value), dialect)
+        default_literal = _numeric_literal(
+            float(abnormal_spec.default_fill_value), dialect, literal_format
+        )
         cols_csv = ", ".join(cols)
         return (
             f"least({cols_csv}) = {default_literal} and "
@@ -280,7 +333,11 @@ def _build_abnormal_condition(
 
 
 def _score_expression(
-    score_p_expr: str, score_spec: ScoreSpec, dialect: str, multi_line: bool = False
+    score_p_expr: str,
+    score_spec: ScoreSpec,
+    dialect: str,
+    literal_format: str,
+    multi_line: bool = False,
 ) -> str:
     """Generate SQL expression to convert probability into a scorecard score.
 
@@ -288,20 +345,22 @@ def _score_expression(
         score_p_expr: The SQL expression for probability.
         score_spec: Scorecard specification.
         dialect: SQL dialect.
+        literal_format: Literal formatting mode.
         multi_line: Whether to use 'a' and 'b' variables (for DDL mode).
 
     Returns:
         str: SQL expression for the score.
     """
-    p_lo = _fmt_num(score_spec.epsilon, dialect)
-    p_hi = _fmt_num(1.0 - score_spec.epsilon, dialect)
+    p_lo = _numeric_literal(score_spec.epsilon, dialect, literal_format)
+    p_hi = _numeric_literal(1.0 - score_spec.epsilon, dialect, literal_format)
+    one_literal = _numeric_literal(1.0, dialect, literal_format)
     p_clamped = f"least(greatest(({score_p_expr}), {p_lo}), {p_hi})"
-    odds = f"(({p_clamped}) / (1.0 - ({p_clamped})))"
+    odds = f"(({p_clamped}) / ({one_literal} - ({p_clamped})))"
 
     if multi_line:
         raw = f"(a - b * ln({odds}))"
     else:
-        raw = f"({_fmt_num(score_spec.offset, dialect)} - {_fmt_num(score_spec.factor, dialect)} * ln({odds}))"
+        raw = f"({_numeric_literal(score_spec.offset, dialect, literal_format)} - {_numeric_literal(score_spec.factor, dialect, literal_format)} * ln({odds}))"
 
     if dialect == "psql":
         return f"round(({raw})::numeric, {score_spec.score_scale})"
@@ -354,6 +413,7 @@ def render_sql(
     output_table: Optional[str],
     score_spec: Optional[ScoreSpec],
     abnormal_spec: AbnormalSpec,
+    literal_format: str = "standard",
 ) -> Dict[str, Optional[str]]:
     """Render the model IR into SQL code.
 
@@ -366,6 +426,7 @@ def render_sql(
         output_table: Target table name for DDL.
         score_spec: Optional scorecard parameters.
         abnormal_spec: Abnormal rule specification.
+        literal_format: Literal formatting mode ('standard' or 'scientific').
 
     Returns:
         Dict[str, Optional[str]]: Generated SQL components.
@@ -375,10 +436,23 @@ def render_sql(
     if sql_mode not in {"expression", "select", "ddl"}:
         raise ValueError("sql_mode must be 'expression', 'select' or 'ddl'")
 
-    base_margin_val = _fmt_num(ir.base_margin, dialect)
+    base_margin_val = _as_double_literal(
+        _numeric_literal(ir.base_margin, dialect, literal_format),
+        dialect,
+        literal_format,
+    )
 
-    tree_terms = [_render_tree(tree, dialect, 0) for tree in ir.trees]
-    margin_body = " + ".join(tree_terms) if tree_terms else "0.0"
+    tree_terms = [
+        _render_tree(tree, dialect, literal_format, 0) for tree in ir.trees
+    ]
+    if dialect == "hive" and literal_format == "standard":
+        tree_terms = [f"cast(({term}) as double)" for term in tree_terms]
+
+    margin_body = " + ".join(tree_terms) if tree_terms else _as_double_literal(
+        _numeric_literal(0.0, dialect, literal_format),
+        dialect,
+        literal_format,
+    )
 
     if ir.model_type == "xgboost":
         margin_expr = _xgb_margin_expr(tree_terms, base_margin_val, dialect)
@@ -392,11 +466,20 @@ def render_sql(
             return _float32_cast_expr(expr, dialect)
         return expr
 
-    normal_score_p_expr = _wrap_float(f"1.0 / (1.0 + exp(-({margin_expr})))")
+    one_literal = _as_double_literal(
+        _numeric_literal(1.0, dialect, literal_format),
+        dialect,
+        literal_format,
+    )
+    normal_score_p_expr = _wrap_float(
+        f"{one_literal} / ({one_literal} + exp(-({margin_expr})))"
+    )
 
-    abnormal_cond = _build_abnormal_condition(ir.feature_names, dialect, abnormal_spec)
+    abnormal_cond = _build_abnormal_condition(
+        ir.feature_names, dialect, abnormal_spec, literal_format
+    )
     abnormal_literal = (
-        _fmt_num(float(abnormal_spec.abnormal_value), dialect)
+        _numeric_literal(float(abnormal_spec.abnormal_value), dialect, literal_format)
         if abnormal_spec.active
         else "None"
     )
@@ -414,7 +497,9 @@ def render_sql(
 
     score_expr: Optional[str] = None
     if score_spec is not None:
-        normal_score_expr = _score_expression(normal_score_p_expr, score_spec, dialect)
+        normal_score_expr = _score_expression(
+            normal_score_p_expr, score_spec, dialect, literal_format
+        )
         if abnormal_cond is not None:
             score_expr = _render_case_when(
                 abnormal_cond,
@@ -450,7 +535,7 @@ def render_sql(
 
         tree_score_fields = []
         for idx, tree in enumerate(ir.trees):
-            tree_expr = _render_tree(tree, dialect, 3)
+            tree_expr = _render_tree(tree, dialect, literal_format, 3)
             tree_score_fields.append(
                 f"            --tree{idx}\n            ,{tree_expr} as tree_{idx}_score"
             )
@@ -465,7 +550,9 @@ def render_sql(
             margin_sum_expr = _xgb_margin_expr(tree_terms_ddl, base_margin_val, dialect)
         else:
             margin_sum_expr = f"({tree_sum}) + ({base_margin_val})"
-        inner_score_p_expr = _wrap_float(f"1 / (1 + exp(-({margin_sum_expr})))")
+        inner_score_p_expr = _wrap_float(
+            f"{one_literal} / ({one_literal} + exp(-({margin_sum_expr})))"
+        )
 
         top_fields: List[str] = []
         for col in keep_columns or []:
@@ -474,7 +561,7 @@ def render_sql(
 
         if score_spec is not None:
             score_final_logic = _score_expression(
-                "score_p", score_spec, dialect, multi_line=True
+                "score_p", score_spec, dialect, literal_format, multi_line=True
             )
             if abnormal_cond is not None:
                 score_case = _render_case_when(
@@ -514,10 +601,10 @@ def render_sql(
                 "from (",
                 "    select",
                 "        *",
-                f"        ,{_fmt_num(score_spec.pdo, dialect)} / ln(2) as b" if score_spec else "",
+                f"        ,{_numeric_literal(score_spec.pdo, dialect, literal_format)} / ln(2) as b" if score_spec else "",
                 (
-                    f"        ,{_fmt_num(score_spec.base_score, dialect)} + ({_fmt_num(score_spec.pdo, dialect)} / ln(2)) * "
-                    f"ln(1 / {_fmt_num(score_spec.base_odds, dialect)}) as a"
+                    f"        ,{_numeric_literal(score_spec.base_score, dialect, literal_format)} + ({_numeric_literal(score_spec.pdo, dialect, literal_format)} / ln(2)) * "
+                    f"ln({_numeric_literal(1.0, dialect, literal_format)} / {_numeric_literal(score_spec.base_odds, dialect, literal_format)}) as a"
                     if score_spec
                     else ""
                 ),
