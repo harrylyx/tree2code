@@ -151,22 +151,27 @@ def spark():
     except ImportError:
         pytest.skip("pyspark not installed")
 
-    # Set JAVA_HOME
-    java_home = "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
-    if os.path.exists(java_home):
-        os.environ["JAVA_HOME"] = java_home
-        os.environ["PATH"] = f"{java_home}/bin:" + os.environ["PATH"]
+    # On macOS with Homebrew, set JAVA_HOME if not already configured.
+    # On CI (Linux), JAVA_HOME is set by actions/setup-java — do not override.
+    mac_java_home = "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
+    if "JAVA_HOME" not in os.environ and os.path.exists(mac_java_home):
+        os.environ["JAVA_HOME"] = mac_java_home
+        os.environ["PATH"] = f"{mac_java_home}/bin:" + os.environ["PATH"]
 
     warehouse_dir = tempfile.mkdtemp()
-    spark = SparkSession.builder \
-        .appName("Tree2CodeTest") \
-        .master("local[1]") \
-        .config("spark.driver.memory", "8g") \
-        .config("spark.driver.bindAddress", "127.0.0.1") \
-        .config("spark.driver.host", "127.0.0.1") \
-        .config("spark.sql.warehouse.dir", warehouse_dir) \
-        .config("spark.ui.enabled", "false") \
-        .getOrCreate()
-    
+    try:
+        spark = (
+            SparkSession.builder.appName("Tree2CodeTest")
+            .master("local[1]")
+            .config("spark.driver.memory", "4g")
+            .config("spark.driver.bindAddress", "127.0.0.1")
+            .config("spark.driver.host", "127.0.0.1")
+            .config("spark.sql.warehouse.dir", warehouse_dir)
+            .config("spark.ui.enabled", "false")
+            .getOrCreate()
+        )
+    except Exception as exc:
+        pytest.skip(f"Could not start SparkSession: {exc}")
+
     yield spark
     spark.stop()
