@@ -62,7 +62,7 @@ def test_lgb_missing_type_none_is_parsed(lgb_model):
 
 
 def test_lgb_categorical_python_parity(lgb_categorical_model, categorical_sample_rows):
-    result = convert(lgb_categorical_model, to="python")
+    result = convert(lgb_categorical_model, to="python", compatible_mode=True)
     predict_row = _load_predictor(result["python"])
 
     reference = lgb_categorical_model.predict_proba(categorical_sample_rows)[:, 1]
@@ -73,7 +73,7 @@ def test_lgb_categorical_python_parity(lgb_categorical_model, categorical_sample
 
 
 def test_xgb_categorical_python_parity(xgb_categorical_model, categorical_sample_rows):
-    result = convert(xgb_categorical_model, to="python")
+    result = convert(xgb_categorical_model, to="python", compatible_mode=True)
     predict_row = _load_predictor(result["python"])
 
     reference = xgb_categorical_model.predict_proba(categorical_sample_rows)[:, 1]
@@ -113,7 +113,7 @@ def test_score_case_expression_is_multiline_formatted(xgb_model, score_params):
 
 
 def test_python_missing_nan_is_treated_as_missing(xgb_model, sample_rows):
-    out = convert(xgb_model, to="python")
+    out = convert(xgb_model, to="python", compatible_mode=True)
     predict_row = _load_predictor(out["python"])
 
     row = sample_rows.iloc[0].to_dict()
@@ -125,7 +125,7 @@ def test_python_missing_nan_is_treated_as_missing(xgb_model, sample_rows):
 
 
 def test_lgb_python_missing_type_none_matches_native(lgb_model, sample_rows):
-    out = convert(lgb_model, to="python")
+    out = convert(lgb_model, to="python", compatible_mode=True)
     predict_row = _load_predictor(out["python"])
 
     row = sample_rows.iloc[0].to_dict()
@@ -137,18 +137,18 @@ def test_lgb_python_missing_type_none_matches_native(lgb_model, sample_rows):
 
 
 def test_xgb_python_code_uses_float32_branch_compare(xgb_model):
-    out = convert(xgb_model, to="python")
+    out = convert(xgb_model, to="python", compatible_mode=True)
     code = out["python"]
     assert "_safe_numeric_compare(" in code
     assert "True, 'nan')" in code
 
 
 def test_sql_missing_expression_contains_nan_check(xgb_model):
-    out_psql = convert(xgb_model, to="sql", dialect="psql", sql_mode="expression")
+    out_psql = convert(xgb_model, to="sql", dialect="psql", sql_mode="expression", compatible_mode=True)
     expr_psql = out_psql["sql"]["score_p_expr"]
     assert "'NaN'::double precision" in expr_psql
 
-    out_hive = convert(xgb_model, to="sql", dialect="hive", sql_mode="expression")
+    out_hive = convert(xgb_model, to="sql", dialect="hive", sql_mode="expression", compatible_mode=True)
     expr_hive = out_hive["sql"]["score_p_expr"]
     assert "isnan(" not in expr_hive.lower()
     assert "is null" in expr_hive.lower()

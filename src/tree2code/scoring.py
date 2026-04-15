@@ -111,8 +111,7 @@ def probability_to_score(probability: float, spec: ScoreSpec) -> float:
     Returns:
         float: Calculated score.
     """
-    p = min(max(float(probability), spec.epsilon), 1.0 - spec.epsilon)
-    odds = p / (1.0 - p)
+    odds = probability / (1.0 - probability)
     raw_score = spec.offset - spec.factor * math.log(odds)
     return round_half_up(raw_score, spec.score_scale)
 

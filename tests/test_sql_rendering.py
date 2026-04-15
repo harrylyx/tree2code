@@ -132,6 +132,7 @@ def test_missing_type_none_sql_normalizes_nan_to_zero():
         score_spec=None,
         abnormal_spec=AbnormalSpec(),
         literal_format="scientific",
+        compatible_mode=True,
     )["score_p_expr"]
     assert hive_expr is not None
     lower_expr = hive_expr.lower()

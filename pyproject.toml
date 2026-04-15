@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tree2code"
-version = "0.2.3"
+version = "0.2.4"
 description = "Convert XGBoost and LightGBM binary models into SQL and pure Python scoring code."
 readme = "README.md"
 requires-python = ">=3.8,<3.15"

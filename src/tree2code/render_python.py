@@ -112,6 +112,7 @@ def render_python(
     ir: ModelIR,
     score_spec: Optional[ScoreSpec],
     abnormal_spec: AbnormalSpec,
+    compatible_mode: bool = False,
 ) -> str:
     """Render the model IR into a pure Python scoring script.
 
@@ -141,11 +142,12 @@ def render_python(
     lines.append(f"{_indent(2)}return False")
     lines.append(f"{_indent(1)}if value is None:")
     lines.append(f"{_indent(2)}return True")
-    lines.append(f"{_indent(1)}try:")
-    lines.append(f"{_indent(2)}if math.isnan(float(value)):")
-    lines.append(f"{_indent(3)}return True")
-    lines.append(f"{_indent(1)}except (TypeError, ValueError):")
-    lines.append(f"{_indent(2)}pass")
+    if compatible_mode:
+        lines.append(f"{_indent(1)}try:")
+        lines.append(f"{_indent(2)}if math.isnan(float(value)):")
+        lines.append(f"{_indent(3)}return True")
+        lines.append(f"{_indent(1)}except (TypeError, ValueError):")
+        lines.append(f"{_indent(2)}pass")
     lines.append(f"{_indent(1)}if missing_type == 'zero' and value == 0:")
     lines.append(f"{_indent(2)}return True")
     lines.append(f"{_indent(1)}return False")
@@ -155,20 +157,22 @@ def render_python(
     lines.append(f"{_indent(1)}if missing_type == 'none':")
     lines.append(f"{_indent(2)}if value is None:")
     lines.append(f"{_indent(3)}value = 0.0")
-    lines.append(f"{_indent(2)}else:")
-    lines.append(f"{_indent(3)}try:")
-    lines.append(f"{_indent(4)}parsed = float(value)")
-    lines.append(f"{_indent(3)}except (TypeError, ValueError):")
-    lines.append(f"{_indent(4)}parsed = None")
-    lines.append(f"{_indent(3)}if parsed is not None and math.isnan(parsed):")
-    lines.append(f"{_indent(4)}value = 0.0")
+    if compatible_mode:
+        lines.append(f"{_indent(2)}else:")
+        lines.append(f"{_indent(3)}try:")
+        lines.append(f"{_indent(4)}parsed = float(value)")
+        lines.append(f"{_indent(3)}except (TypeError, ValueError):")
+        lines.append(f"{_indent(4)}parsed = None")
+        lines.append(f"{_indent(3)}if parsed is not None and math.isnan(parsed):")
+        lines.append(f"{_indent(4)}value = 0.0")
     lines.append(f"{_indent(1)}try:")
     lines.append(f"{_indent(2)}left = _f32(value) if use_f32 else float(value)")
     lines.append(f"{_indent(1)}except (TypeError, ValueError):")
     lines.append(f"{_indent(2)}return False")
     lines.append(f"{_indent(1)}right = _f32(threshold) if use_f32 else float(threshold)")
-    lines.append(f"{_indent(1)}if math.isnan(left):")
-    lines.append(f"{_indent(2)}return False")
+    if compatible_mode:
+        lines.append(f"{_indent(1)}if math.isnan(left):")
+        lines.append(f"{_indent(2)}return False")
     lines.append(f"{_indent(1)}if op == '<=':")
     lines.append(f"{_indent(2)}return left <= right")
     lines.append(f"{_indent(1)}return left < right")
@@ -210,10 +214,7 @@ def render_python(
         lines.append("")
 
         lines.append("def _probability_to_score(score_p):")
-        lines.append(
-            f"{_indent(1)}p = min(max(float(score_p), _SCORE_EPS), 1.0 - _SCORE_EPS)"
-        )
-        lines.append(f"{_indent(1)}odds = p / (1.0 - p)")
+        lines.append(f"{_indent(1)}odds = score_p / (1.0 - score_p)")
         lines.append(
             f"{_indent(1)}score = _SCORE_OFFSET - _SCORE_FACTOR * math.log(odds)"
         )

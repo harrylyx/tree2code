@@ -52,6 +52,7 @@ def convert(
     abnormal_rule: Optional[str] = None,
     default_fill_value: Optional[float] = None,
     abnormal_value: Optional[float] = None,
+    compatible_mode: bool = False,
 ) -> Dict[str, Any]:
     """Convert a binary XGBoost / LightGBM model into SQL and/or pure Python code.
 
@@ -78,6 +79,7 @@ def convert(
         abnormal_rule: Predefined check rule. One of 'all_null' or 'all_default'.
         default_fill_value: The value representing 'default/null' if rule is 'all_default'.
         abnormal_value: The value to output if the abnormal rule is triggered.
+        compatible_mode: Whether to enable nan handling. Default is False.
 
     Returns:
         Dict[str, Any]: A dictionary containing the generated code and metadata.
@@ -114,6 +116,7 @@ def convert(
             score_spec=score_spec,
             abnormal_spec=abnormal_spec,
             literal_format=literal_format,
+            compatible_mode=compatible_mode,
         )
 
     if "python" in outputs:
@@ -121,6 +124,7 @@ def convert(
             ir=ir,
             score_spec=score_spec,
             abnormal_spec=abnormal_spec,
+            compatible_mode=compatible_mode,
         )
 
     return result

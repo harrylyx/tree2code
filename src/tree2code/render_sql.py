@@ -131,16 +131,23 @@ def _missing_expr(
     missing_type: str,
     dialect: str,
     literal_format: str,
+    compatible_mode: bool,
 ) -> str:
     """Generate SQL expression for missing-value check.
 
-    This treats both NULL and NaN as missing.
+    This treats NULL (and optionally NaN if compatible_mode=True) as missing.
     """
     if missing_type == "none":
         return "false"
 
-    nan_check = _nan_check_expr(column, dialect)
     zero_literal = _numeric_literal(0.0, dialect, literal_format)
+    
+    if not compatible_mode:
+        if missing_type == "zero":
+            return f"({column} is null or {column} = {zero_literal})"
+        return f"({column} is null)"
+
+    nan_check = _nan_check_expr(column, dialect)
     if missing_type == "zero":
         return f"({column} is null or {nan_check} or {column} = {zero_literal})"
     return f"({column} is null or {nan_check})"
@@ -151,18 +158,23 @@ def _not_missing_expr(
     missing_type: str,
     dialect: str,
     literal_format: str,
+    compatible_mode: bool,
 ) -> str:
     """Generate SQL expression for non-missing-value check."""
-    return f"(not {_missing_expr(column, missing_type, dialect, literal_format)})"
+    return f"(not {_missing_expr(column, missing_type, dialect, literal_format, compatible_mode)})"
 
 
-def _none_missing_numeric_expr(column: str, dialect: str, literal_format: str) -> str:
+def _none_missing_numeric_expr(
+    column: str, dialect: str, literal_format: str, compatible_mode: bool
+) -> str:
     """Normalize `missing_type=none` numeric value for LightGBM parity.
 
     LightGBM treats NaN/None as numeric zero in comparisons for this mode.
     """
-    nan_check = _nan_check_expr(column, dialect)
     zero = _numeric_literal(0.0, dialect, literal_format)
+    if not compatible_mode:
+        return f"(case when {column} is null then {zero} else {column} end)"
+    nan_check = _nan_check_expr(column, dialect)
     return f"(case when {column} is null or {nan_check} then {zero} else {column} end)"
 
 
@@ -214,7 +226,7 @@ def _categorical_match_expr(
 
 
 def _render_tree(
-    node: TreeNode, dialect: str, literal_format: str, depth: int = 0
+    node: TreeNode, dialect: str, literal_format: str, compatible_mode: bool, depth: int = 0
 ) -> str:
     """Recursively render a tree node into SQL CASE WHEN expressions.
 
@@ -237,8 +249,8 @@ def _render_tree(
 
     col = _quote_ident(node.feature, dialect)
 
-    missing = _missing_expr(col, node.missing_type, dialect, literal_format)
-    not_missing = _not_missing_expr(col, node.missing_type, dialect, literal_format)
+    missing = _missing_expr(col, node.missing_type, dialect, literal_format, compatible_mode)
+    not_missing = _not_missing_expr(col, node.missing_type, dialect, literal_format, compatible_mode)
 
     if node.split_type == "categorical":
         categories = node.categories or []
@@ -270,7 +282,7 @@ def _render_tree(
         op = "<=" if node.operator == "<=" else "<"
         compare_col = col
         if node.missing_type == "none":
-            compare_col = _none_missing_numeric_expr(col, dialect, literal_format)
+            compare_col = _none_missing_numeric_expr(col, dialect, literal_format, compatible_mode)
 
         if node.float32_compare:
             cmp_expr = (
@@ -285,8 +297,8 @@ def _render_tree(
         else:
             cond = f"({not_missing} and {cmp_expr})"
 
-    left_expr = _render_tree(node.left, dialect, literal_format, depth + 1)
-    right_expr = _render_tree(node.right, dialect, literal_format, depth + 1)
+    left_expr = _render_tree(node.left, dialect, literal_format, compatible_mode, depth + 1)
+    right_expr = _render_tree(node.right, dialect, literal_format, compatible_mode, depth + 1)
     return _render_case_when(cond, left_expr, right_expr, depth=depth, wrap=True)
 
 
@@ -295,6 +307,7 @@ def _build_abnormal_condition(
     dialect: str,
     abnormal_spec: AbnormalSpec,
     literal_format: str,
+    compatible_mode: bool,
 ) -> Optional[str]:
     """Generate the SQL condition for checking abnormal rules.
 
@@ -315,7 +328,7 @@ def _build_abnormal_condition(
     cols = [_quote_ident(name, dialect) for name in feature_names]
 
     if abnormal_spec.rule == "all_null":
-        checks = [_missing_expr(col, "nan", dialect, literal_format) for col in cols]
+        checks = [_missing_expr(col, "nan", dialect, literal_format, compatible_mode) for col in cols]
         return " and ".join(f"({check})" for check in checks)
 
     if abnormal_spec.rule == "all_default":
@@ -351,16 +364,14 @@ def _score_expression(
     Returns:
         str: SQL expression for the score.
     """
-    p_lo = _numeric_literal(score_spec.epsilon, dialect, literal_format)
-    p_hi = _numeric_literal(1.0 - score_spec.epsilon, dialect, literal_format)
-    one_literal = _numeric_literal(1.0, dialect, literal_format)
-    p_clamped = f"least(greatest(({score_p_expr}), {p_lo}), {p_hi})"
-    odds = f"(({p_clamped}) / ({one_literal} - ({p_clamped})))"
+    local_format = "standard"
+    one_literal = _numeric_literal(1.0, dialect, local_format)
+    odds = f"(({score_p_expr}) / ({one_literal} - ({score_p_expr})))"
 
     if multi_line:
         raw = f"(a - b * ln({odds}))"
     else:
-        raw = f"({_numeric_literal(score_spec.offset, dialect, literal_format)} - {_numeric_literal(score_spec.factor, dialect, literal_format)} * ln({odds}))"
+        raw = f"({_numeric_literal(score_spec.offset, dialect, local_format)} - {_numeric_literal(score_spec.factor, dialect, local_format)} * ln({odds}))"
 
     if dialect == "psql":
         return f"round(({raw})::numeric, {score_spec.score_scale})"
@@ -414,6 +425,7 @@ def render_sql(
     score_spec: Optional[ScoreSpec],
     abnormal_spec: AbnormalSpec,
     literal_format: str = "standard",
+    compatible_mode: bool = False,
 ) -> Dict[str, Optional[str]]:
     """Render the model IR into SQL code.
 
@@ -443,7 +455,7 @@ def render_sql(
     )
 
     tree_terms = [
-        _render_tree(tree, dialect, literal_format, 0) for tree in ir.trees
+        _render_tree(tree, dialect, literal_format, compatible_mode, 0) for tree in ir.trees
     ]
     if dialect == "hive" and literal_format == "standard":
         tree_terms = [f"cast(({term}) as double)" for term in tree_terms]
@@ -476,7 +488,7 @@ def render_sql(
     )
 
     abnormal_cond = _build_abnormal_condition(
-        ir.feature_names, dialect, abnormal_spec, literal_format
+        ir.feature_names, dialect, abnormal_spec, literal_format, compatible_mode
     )
     abnormal_literal = (
         _numeric_literal(float(abnormal_spec.abnormal_value), dialect, literal_format)
@@ -535,7 +547,7 @@ def render_sql(
 
         tree_score_fields = []
         for idx, tree in enumerate(ir.trees):
-            tree_expr = _render_tree(tree, dialect, literal_format, 3)
+            tree_expr = _render_tree(tree, dialect, literal_format, compatible_mode, 3)
             tree_score_fields.append(
                 f"            --tree{idx}\n            ,{tree_expr} as tree_{idx}_score"
             )
@@ -601,10 +613,10 @@ def render_sql(
                 "from (",
                 "    select",
                 "        *",
-                f"        ,{_numeric_literal(score_spec.pdo, dialect, literal_format)} / ln(2) as b" if score_spec else "",
+                f"        ,{_numeric_literal(score_spec.pdo, dialect, 'standard')} / ln(2) as b" if score_spec else "",
                 (
-                    f"        ,{_numeric_literal(score_spec.base_score, dialect, literal_format)} + ({_numeric_literal(score_spec.pdo, dialect, literal_format)} / ln(2)) * "
-                    f"ln({_numeric_literal(1.0, dialect, literal_format)} / {_numeric_literal(score_spec.base_odds, dialect, literal_format)}) as a"
+                    f"        ,{_numeric_literal(score_spec.base_score, dialect, 'standard')} + ({_numeric_literal(score_spec.pdo, dialect, 'standard')} / ln(2)) * "
+                    f"ln({_numeric_literal(1.0, dialect, 'standard')} / {_numeric_literal(score_spec.base_odds, dialect, 'standard')}) as a"
                     if score_spec
                     else ""
                 ),

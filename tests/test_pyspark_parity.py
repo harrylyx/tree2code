@@ -36,6 +36,7 @@ def _run_spark_sql_parity(
         literal_format=literal_format,
         table_name=table_name,
         keep_columns=["__row_id"],
+        compatible_mode=True,
     )
     spark_results = spark.sql(out["sql"]["select_sql"]).toPandas()
 
