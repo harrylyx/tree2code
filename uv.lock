@@ -1912,6 +1912,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pypmml"
+version = "1.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "py4j" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/db/c1/655b7def08b80a8b2fe1e56dcd49417f00f0c0a257e218667c87e0efeb15/pypmml-1.0.2.tar.gz", hash = "sha256:84e0defa517e105e760dcce1967a4ef2bdc2eabd8931822a90550c52a3a8f6f6", size = 13715593, upload-time = "2024-09-05T00:28:41.031Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/c8/cfec1226acedb788e4c57ef807b9596d260fa70dfc8d6c12175bb3b18f67/pypmml-1.0.2-py3-none-any.whl", hash = "sha256:c72c5bfcec9ae0b7bf27c2f76bd7326b87a5c5b2fb2ae58bf30cd99dfa473f01", size = 13717150, upload-time = "2024-09-05T00:28:37.488Z" },
+]
+
+[[package]]
 name = "pyspark"
 version = "3.5.8"
 source = { registry = "https://pypi.org/simple" }
@@ -2760,7 +2772,7 @@ wheels = [
 
 [[package]]
 name = "tree2code"
-version = "0.2.2"
+version = "0.2.5"
 source = { editable = "." }
 
 [package.dev-dependencies]
@@ -2781,6 +2793,7 @@ dev = [
     { name = "pyarrow", version = "17.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "pyarrow", version = "21.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
     { name = "pyarrow", version = "23.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "pypmml" },
     { name = "pyspark", version = "3.5.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "pyspark", version = "4.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
     { name = "pyspark", version = "4.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
@@ -2805,6 +2818,7 @@ dev = [
     { name = "pandas" },
     { name = "psycopg", extras = ["binary"] },
     { name = "pyarrow" },
+    { name = "pypmml", specifier = "==1.0.2" },
     { name = "pyspark", specifier = ">=3.5.0" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "scikit-learn" },

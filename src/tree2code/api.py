@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from .parsers import parse_model
+from .render_pmml import render_pmml
 from .render_python import render_python
 from .render_sql import render_sql
 from .scoring import build_abnormal_spec, build_score_spec
@@ -12,7 +13,8 @@ def _normalize_to(to: Union[str, Sequence[str]]) -> List[str]:
     """Normalize the 'to' parameter into a list of lowercase strings.
 
     Args:
-        to: Target conversion format(s). Can be 'sql', 'python', or a list of them.
+        to: Target conversion format(s). Can be 'sql', 'python', 'pmml',
+            or a list of them.
 
     Returns:
         List[str]: Normalized target formats.
@@ -28,8 +30,8 @@ def _normalize_to(to: Union[str, Sequence[str]]) -> List[str]:
     normalized: List[str] = []
     for item in values:
         value = str(item).lower().strip()
-        if value not in {"sql", "python"}:
-            raise ValueError("to must contain only: 'sql', 'python'")
+        if value not in {"sql", "python", "pmml"}:
+            raise ValueError("to must contain only: 'sql', 'python', 'pmml'")
         if value not in normalized:
             normalized.append(value)
     return normalized
@@ -53,12 +55,18 @@ def convert(
     default_fill_value: Optional[float] = None,
     abnormal_value: Optional[float] = None,
     compatible_mode: bool = False,
+    pmml_version: str = "4.4.1",
+    pmml_model_name: str = "tree2code_model",
+    pmml_target_name: str = "target",
+    pmml_positive_class: str = "1",
+    pmml_negative_class: str = "0",
 ) -> Dict[str, Any]:
-    """Convert a binary XGBoost / LightGBM model into SQL and/or pure Python code.
+    """Convert a binary XGBoost / LightGBM model into SQL, Python, and/or PMML.
 
     Args:
         model: The trained model object (XGBoost Booster/Classifier or LightGBM Booster/Classifier).
-        to: Target format(s). One of 'sql', 'python', or a list containing both. Defaults to "sql".
+        to: Target format(s). One of 'sql', 'python', 'pmml', or a list of them.
+            Defaults to "sql".
         dialect: SQL dialect. Either 'psql' (PostgreSQL) or 'hive'. Defaults to "psql".
         sql_mode: SQL output format. One of:
             - 'expression': Returns the raw score_p and score mathematical expressions.
@@ -80,10 +88,15 @@ def convert(
         default_fill_value: The value representing 'default/null' if rule is 'all_default'.
         abnormal_value: The value to output if the abnormal rule is triggered.
         compatible_mode: Whether to enable nan handling. Default is False.
+        pmml_version: PMML version. One of '4.4.1', '4.3', or '4.2.1'.
+        pmml_model_name: Model name to use in generated PMML.
+        pmml_target_name: Synthetic binary target field name to use in PMML.
+        pmml_positive_class: Positive class label to use in PMML.
+        pmml_negative_class: Negative class label to use in PMML.
 
     Returns:
         Dict[str, Any]: A dictionary containing the generated code and metadata.
-            Keys include 'meta', and optionally 'sql' and 'python'.
+            Keys include 'meta', and optionally 'sql', 'python', and 'pmml'.
 
     Example:
         >>> out = convert(model, to="sql", dialect="hive", sql_mode="select")
@@ -125,6 +138,16 @@ def convert(
             score_spec=score_spec,
             abnormal_spec=abnormal_spec,
             compatible_mode=compatible_mode,
+        )
+
+    if "pmml" in outputs:
+        result["pmml"] = render_pmml(
+            ir=ir,
+            pmml_version=pmml_version,
+            model_name=pmml_model_name,
+            target_name=pmml_target_name,
+            positive_class=pmml_positive_class,
+            negative_class=pmml_negative_class,
         )
 
     return result

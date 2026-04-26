@@ -1,6 +1,8 @@
 import math
 
 from tree2code import convert
+from tree2code.ir import eval_margin, eval_probability
+from tree2code.parsers import parse_model
 
 
 def _load_predictor(code: str):
@@ -18,6 +20,27 @@ def test_xgb_python_probability_parity(xgb_model, sample_rows):
         row = sample_rows.iloc[idx].to_dict()
         pred = predict_row(row)["score_p"]
         assert math.isclose(pred, float(py_ref[idx]), rel_tol=0.0, abs_tol=1e-7)
+
+
+def test_xgb_python_probability_matches_native_float32_output(xgb_model, sample_rows):
+    result = convert(xgb_model, to="python")
+    predict_row = _load_predictor(result["python"])
+
+    py_ref = xgb_model.predict_proba(sample_rows)[:, 1]
+    for idx in range(min(120, len(sample_rows))):
+        row = sample_rows.iloc[idx].to_dict()
+        pred = predict_row(row)["score_p"]
+        assert pred == float(py_ref[idx])
+
+
+def test_xgb_ir_probability_matches_native_float32_output(xgb_model, sample_rows):
+    ir = parse_model(xgb_model)
+
+    py_ref = xgb_model.predict_proba(sample_rows)[:, 1]
+    for idx in range(min(120, len(sample_rows))):
+        row = sample_rows.iloc[idx].to_dict()
+        assert eval_probability(ir, row) == float(py_ref[idx])
+        assert isinstance(eval_margin(ir, row), float)
 
 
 def test_lgb_python_probability_parity(lgb_model, sample_rows):

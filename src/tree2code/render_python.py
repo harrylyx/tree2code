@@ -127,6 +127,9 @@ def render_python(
     lines: List[str] = []
     lines.append("import math")
     lines.append("import struct")
+    if ir.model_type == "xgboost":
+        lines.append("import ctypes")
+        lines.append("import ctypes.util")
     lines.append("from decimal import Decimal, ROUND_HALF_UP")
     lines.append("")
 
@@ -205,6 +208,39 @@ def render_python(
     )
     lines.append("")
 
+    if ir.model_type == "xgboost":
+        lines.append("def _load_expf():")
+        lines.append(
+            f"{_indent(1)}for name in (None, ctypes.util.find_library('m'), 'msvcrt'):"
+        )
+        lines.append(f"{_indent(2)}try:")
+        lines.append(f"{_indent(3)}if name is None:")
+        lines.append(f"{_indent(4)}library = ctypes.CDLL(None)")
+        lines.append(f"{_indent(3)}else:")
+        lines.append(
+            f"{_indent(4)}library = ctypes.CDLL(name)"
+        )
+        lines.append(f"{_indent(3)}expf = library.expf")
+        lines.append(f"{_indent(3)}expf.argtypes = [ctypes.c_float]")
+        lines.append(f"{_indent(3)}expf.restype = ctypes.c_float")
+        lines.append(f"{_indent(3)}return expf")
+        lines.append(f"{_indent(2)}except Exception:")
+        lines.append(f"{_indent(3)}pass")
+        lines.append(f"{_indent(1)}return None")
+        lines.append("")
+        lines.append("_EXPF = _load_expf()")
+        lines.append("")
+
+        lines.append("def _xgb_sigmoid(value):")
+        lines.append(f"{_indent(1)}if _EXPF is None:")
+        lines.append(
+            f"{_indent(2)}return _f32(1.0 / (1.0 + math.exp(-value)))"
+        )
+        lines.append(f"{_indent(1)}exp_value = _EXPF(ctypes.c_float(-value))")
+        lines.append(f"{_indent(1)}denom = _f32(_f32(1.0) + exp_value)")
+        lines.append(f"{_indent(1)}return _f32(_f32(1.0) / denom)")
+        lines.append("")
+
     if score_spec is not None:
         lines.append("def _round_half_up(value, scale):")
         lines.append(f"{_indent(1)}quant = Decimal('1').scaleb(-scale)")
@@ -245,7 +281,7 @@ def render_python(
             lines.append(
                 f"{_indent(1)}margin = _f32(margin + _f32(_tree_{idx}(row)))"
             )
-        lines.append(f"{_indent(1)}score_p = _f32(1.0 / (1.0 + math.exp(-margin)))")
+        lines.append(f"{_indent(1)}score_p = _xgb_sigmoid(margin)")
     else:
         lines.append(f"{_indent(1)}margin = {_fmt_num(ir.base_margin)}")
         for idx in range(len(ir.trees)):

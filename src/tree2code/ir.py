@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import math
 import struct
 from dataclasses import dataclass
@@ -111,6 +113,38 @@ def _float32(value: Any) -> float:
     return struct.unpack("!f", struct.pack("!f", float(value)))[0]
 
 
+def _load_expf() -> Any:
+    """Load the platform float32 exp function when available."""
+    candidates = [None, ctypes.util.find_library("m"), "msvcrt"]
+    for candidate in candidates:
+        try:
+            if candidate is None:
+                library = ctypes.CDLL(None)
+            else:
+                library = ctypes.CDLL(candidate)
+            expf = library.expf
+            expf.argtypes = [ctypes.c_float]
+            expf.restype = ctypes.c_float
+            return expf
+        except Exception:
+            continue
+    return None
+
+
+_EXPF = _load_expf()
+
+
+def _xgb_sigmoid(value: Any) -> float:
+    """Evaluate XGBoost's float32 logistic transform."""
+    value = _float32(value)
+    if _EXPF is None:
+        return _float32(1.0 / (1.0 + math.exp(-value)))
+
+    exp_value = _EXPF(ctypes.c_float(-value))
+    denom = _float32(_float32(1.0) + exp_value)
+    return _float32(_float32(1.0) / denom)
+
+
 def _eval_numeric_branch(node: TreeNode, value: Any) -> bool:
     """Evaluate numeric split condition for one non-missing value."""
     assert node.threshold is not None
@@ -193,6 +227,12 @@ def eval_margin(ir: ModelIR, row: Dict[str, Any]) -> float:
     Returns:
         float: The raw margin score.
     """
+    if ir.model_type == "xgboost":
+        margin = _float32(ir.base_margin)
+        for tree in ir.trees:
+            margin = _float32(margin + _float32(eval_tree(tree, row)))
+        return margin
+
     margin = float(ir.base_margin)
     for tree in ir.trees:
         margin += eval_tree(tree, row)
@@ -210,6 +250,8 @@ def eval_probability(ir: ModelIR, row: Dict[str, Any]) -> float:
         float: The predicted probability.
     """
     margin = eval_margin(ir, row)
+    if ir.model_type == "xgboost":
+        return _xgb_sigmoid(margin)
     return 1.0 / (1.0 + math.exp(-margin))
 
 

@@ -73,7 +73,7 @@ def test_xgb_spark_parity_with_nan(spark, xgb_model, sample_rows):
     df = sample_rows.copy()
     df.iloc[0, 0] = np.nan
     df.iloc[1, 1] = np.nan
-    _run_spark_sql_parity(spark, xgb_model, df, "temp_xgb_num", tolerance=1e-6)
+    _run_spark_sql_parity(spark, xgb_model, df, "temp_xgb_num", tolerance=1e-7)
 
 
 def test_xgb_spark_parity_with_standard_literals(spark, xgb_model, sample_rows):
@@ -86,7 +86,7 @@ def test_xgb_spark_parity_with_standard_literals(spark, xgb_model, sample_rows):
         xgb_model,
         df,
         "temp_xgb_num_std",
-        tolerance=1e-6,
+        tolerance=1e-7,
         literal_format="standard",
     )
 
@@ -123,4 +123,6 @@ def test_xgb_spark_parity_with_categorical_and_missing(
     df = categorical_sample_rows.copy()
     df.iloc[0, df.columns.get_loc("cat_a")] = np.nan
     df.iloc[1, df.columns.get_loc("cat_b")] = np.nan
-    _run_spark_sql_parity(spark, xgb_categorical_model, df, "temp_xgb_cat", tolerance=1e-6)
+    _run_spark_sql_parity(
+        spark, xgb_categorical_model, df, "temp_xgb_cat", tolerance=1e-7
+    )
