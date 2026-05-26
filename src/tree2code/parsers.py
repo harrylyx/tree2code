@@ -210,13 +210,9 @@ def _parse_xgboost(model: Any) -> ModelIR:
         _parse_xgb_tree_node(json.loads(text), category_maps) for text in dumps
     ]
 
-    feature_names = list(getattr(booster, "feature_names", None) or [])
-    if not feature_names:
-        feature_names = collect_feature_names(trees)
-
     return ModelIR(
         model_type="xgboost",
-        feature_names=feature_names,
+        feature_names=collect_feature_names(trees),
         trees=trees,
         base_margin=base_margin,
     )
@@ -372,16 +368,16 @@ def _parse_lightgbm(model: Any) -> ModelIR:
     if objective and "binary" not in objective:
         raise NotImplementedError("Only binary LightGBM models are supported")
 
-    feature_names = list(dump["feature_names"])
+    all_feature_names = list(dump["feature_names"])
     category_maps = _build_lgb_category_maps(dump)
     trees = [
-        _parse_lgb_tree_node(t["tree_structure"], feature_names, category_maps)
+        _parse_lgb_tree_node(t["tree_structure"], all_feature_names, category_maps)
         for t in dump["tree_info"]
     ]
 
     return ModelIR(
         model_type="lightgbm",
-        feature_names=feature_names,
+        feature_names=collect_feature_names(trees),
         trees=trees,
         base_margin=0.0,
     )

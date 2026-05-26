@@ -312,7 +312,7 @@ def _build_abnormal_condition(
     """Generate the SQL condition for checking abnormal rules.
 
     Args:
-        feature_names: List of all feature names in the model.
+        feature_names: Feature names used by tree split nodes.
         dialect: SQL dialect.
         abnormal_spec: The abnormal rule specification.
 

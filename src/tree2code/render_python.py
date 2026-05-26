@@ -84,7 +84,7 @@ def _abnormal_python_condition(
     """Generate the Python condition for checking abnormal rules.
 
     Args:
-        feature_names: List of all feature names in the model.
+        feature_names: Feature names used by tree split nodes.
         abnormal_spec: The abnormal rule specification.
 
     Returns:

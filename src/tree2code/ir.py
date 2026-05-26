@@ -50,7 +50,7 @@ class ModelIR:
 
     Attributes:
         model_type: The type of model (e.g., 'xgboost', 'lightgbm').
-        feature_names: List of all feature names used in the model.
+        feature_names: List of feature names used by tree split nodes.
         trees: List of roots of the decision trees.
         base_margin: The initial score before adding tree scores.
     """
