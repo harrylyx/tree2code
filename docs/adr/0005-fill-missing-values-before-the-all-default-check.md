@@ -1,0 +1,3 @@
+# Fill missing values before the all-default check
+
+For generated Python, when the `all_default` rule is active, input preparation replaces every recognized object, numeric, or textual raw missing marker with `default_fill_value` before prediction. If every required scoring feature then equals that value, prediction returns `abnormal_value`; otherwise the filled values are passed to the model, making filling a real scoring transformation rather than a check-only convenience. With `all_null` or no abnormal rule, raw missing markers normalize to `NaN`; `all_null` additionally returns `abnormal_value` when every required scoring feature is missing. This input-cleaning behavior does not change SQL generation.

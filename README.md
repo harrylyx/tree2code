@@ -50,7 +50,7 @@ out = convert(
 - `out["sql"]["score_p_expr"]`
 - `out["sql"]["score_expr"]`（仅当提供评分参数）
 - `out["sql"]["select_sql"]`（`sql_mode="select"` 时）
-- `out["python"]`（可 `exec` 的 `predict_row` 函数源码）
+- `out["python"]`（可 `exec` 的 `predict` 函数源码）
 - `out["pmml"]`（PMML XML 字符串）
 
 ## 3. PMML 输出

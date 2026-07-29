@@ -34,7 +34,7 @@ class ScoreSpec:
     @property
     def offset(self) -> float:
         """Calculate the offset for the score formula."""
-        return self.base_score + self.factor * math.log(self.base_odds)
+        return self.base_score - self.factor * math.log(self.base_odds)
 
 
 def build_score_spec(

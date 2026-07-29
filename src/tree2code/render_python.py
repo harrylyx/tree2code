@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import List, Optional, Sequence, Tuple
 
 from .ir import ModelIR, TreeNode
 from .scoring import AbnormalSpec, ScoreSpec
@@ -30,6 +30,50 @@ def _indent(level: int) -> str:
     return " " * (4 * level)
 
 
+def _collect_tree_metadata(
+    nodes: Sequence[TreeNode],
+) -> Tuple[List[str], List[str], List[str], List[str]]:
+    """Traverse tree nodes to collect feature classification metadata.
+
+    Returns:
+        Tuple[List[str], List[str], List[str], List[str]]:
+            (numeric_features, categorical_features, zero_missing_features, none_missing_features)
+    """
+    numeric_features = set()
+    categorical_features = set()
+    zero_missing_features = set()
+    none_missing_features = set()
+
+    def _visit(node: TreeNode) -> None:
+        if node.is_leaf:
+            return
+        if node.feature:
+            if node.split_type == "categorical":
+                categorical_features.add(node.feature)
+            else:
+                numeric_features.add(node.feature)
+
+            if node.missing_type == "zero":
+                zero_missing_features.add(node.feature)
+            elif node.missing_type == "none":
+                none_missing_features.add(node.feature)
+
+        if node.left:
+            _visit(node.left)
+        if node.right:
+            _visit(node.right)
+
+    for n in nodes:
+        _visit(n)
+
+    return (
+        sorted(numeric_features),
+        sorted(categorical_features),
+        sorted(zero_missing_features),
+        sorted(none_missing_features),
+    )
+
+
 def _render_node(lines: List[str], node: TreeNode, depth: int) -> None:
     """Recursively render a tree node into Python code lines.
 
@@ -49,8 +93,8 @@ def _render_node(lines: List[str], node: TreeNode, depth: int) -> None:
     assert node.left is not None
     assert node.right is not None
 
-    lines.append(f"{prefix}v = row.get({node.feature!r})")
-    lines.append(f"{prefix}missing = _is_missing(v, {node.missing_type!r})")
+    lines.append(f"{prefix}v = row[{node.feature!r}]")
+    lines.append(f"{prefix}missing = isinstance(v, float) and math.isnan(v)")
 
     if node.split_type == "categorical":
         categories = tuple(node.categories or [])
@@ -62,10 +106,10 @@ def _render_node(lines: List[str], node: TreeNode, depth: int) -> None:
     else:
         assert node.threshold is not None
         op = "<=" if node.operator == "<=" else "<"
-        cmp_expr = (
-            f"_safe_numeric_compare(v, {_fmt_num(node.threshold)}, {op!r}, "
-            f"{repr(bool(node.float32_compare))}, {node.missing_type!r})"
-        )
+        if node.float32_compare:
+            cmp_expr = f"_f32(v) {op} _f32({_fmt_num(node.threshold)})"
+        else:
+            cmp_expr = f"v {op} {_fmt_num(node.threshold)}"
 
         if node.default_left:
             cond = f"missing or ((not missing) and ({cmp_expr}))"
@@ -76,36 +120,6 @@ def _render_node(lines: List[str], node: TreeNode, depth: int) -> None:
     _render_node(lines, node.left, depth + 1)
     lines.append(f"{prefix}else:")
     _render_node(lines, node.right, depth + 1)
-
-
-def _abnormal_python_condition(
-    feature_names: List[str], abnormal_spec: AbnormalSpec
-) -> Optional[str]:
-    """Generate the Python condition for checking abnormal rules.
-
-    Args:
-        feature_names: Feature names used by tree split nodes.
-        abnormal_spec: The abnormal rule specification.
-
-    Returns:
-        Optional[str]: The Python boolean expression, or None if no rule is active.
-    """
-    if not abnormal_spec.active or not feature_names:
-        return None
-
-    if abnormal_spec.rule == "all_null":
-        checks = [f"_is_missing(row.get({name!r}), 'nan')" for name in feature_names]
-        return " and ".join(checks)
-
-    if abnormal_spec.rule == "all_default":
-        assert abnormal_spec.default_fill_value is not None
-        checks = [
-            f"row.get({name!r}) == {_fmt_num(float(abnormal_spec.default_fill_value))}"
-            for name in feature_names
-        ]
-        return " and ".join(checks)
-
-    return None
 
 
 def render_python(
@@ -120,6 +134,7 @@ def render_python(
         ir: The model intermediate representation.
         score_spec: Optional scorecard parameters.
         abnormal_spec: Abnormal rule specification.
+        compatible_mode: Kept for signature compatibility (Python is independent).
 
     Returns:
         str: The complete Python source code for scoring.
@@ -132,6 +147,8 @@ def render_python(
         lines.append("import ctypes.util")
     lines.append("from decimal import Decimal, ROUND_HALF_UP")
     lines.append("")
+    lines.append("MISSING_TEXT_VALUES = {'', 'nan', 'null', 'none'}")
+    lines.append("")
 
     if score_spec is not None:
         lines.append(f"_SCORE_FACTOR = {_fmt_num(score_spec.factor)}")
@@ -140,45 +157,15 @@ def render_python(
         lines.append(f"_SCORE_EPS = {_fmt_num(score_spec.epsilon)}")
         lines.append("")
 
-    lines.append("def _is_missing(value, missing_type):")
-    lines.append(f"{_indent(1)}if missing_type == 'none':")
-    lines.append(f"{_indent(2)}return False")
+    lines.append("def _is_raw_missing(value):")
     lines.append(f"{_indent(1)}if value is None:")
     lines.append(f"{_indent(2)}return True")
-    if compatible_mode:
-        lines.append(f"{_indent(1)}try:")
-        lines.append(f"{_indent(2)}if math.isnan(float(value)):")
-        lines.append(f"{_indent(3)}return True")
-        lines.append(f"{_indent(1)}except (TypeError, ValueError):")
-        lines.append(f"{_indent(2)}pass")
-    lines.append(f"{_indent(1)}if missing_type == 'zero' and value == 0:")
+    lines.append(f"{_indent(1)}if isinstance(value, float) and math.isnan(value):")
     lines.append(f"{_indent(2)}return True")
+    lines.append(f"{_indent(1)}if isinstance(value, str):")
+    lines.append(f"{_indent(2)}if value.strip().lower() in MISSING_TEXT_VALUES:")
+    lines.append(f"{_indent(3)}return True")
     lines.append(f"{_indent(1)}return False")
-    lines.append("")
-
-    lines.append("def _safe_numeric_compare(value, threshold, op, use_f32, missing_type):")
-    lines.append(f"{_indent(1)}if missing_type == 'none':")
-    lines.append(f"{_indent(2)}if value is None:")
-    lines.append(f"{_indent(3)}value = 0.0")
-    if compatible_mode:
-        lines.append(f"{_indent(2)}else:")
-        lines.append(f"{_indent(3)}try:")
-        lines.append(f"{_indent(4)}parsed = float(value)")
-        lines.append(f"{_indent(3)}except (TypeError, ValueError):")
-        lines.append(f"{_indent(4)}parsed = None")
-        lines.append(f"{_indent(3)}if parsed is not None and math.isnan(parsed):")
-        lines.append(f"{_indent(4)}value = 0.0")
-    lines.append(f"{_indent(1)}try:")
-    lines.append(f"{_indent(2)}left = _f32(value) if use_f32 else float(value)")
-    lines.append(f"{_indent(1)}except (TypeError, ValueError):")
-    lines.append(f"{_indent(2)}return False")
-    lines.append(f"{_indent(1)}right = _f32(threshold) if use_f32 else float(threshold)")
-    if compatible_mode:
-        lines.append(f"{_indent(1)}if math.isnan(left):")
-        lines.append(f"{_indent(2)}return False")
-    lines.append(f"{_indent(1)}if op == '<=':")
-    lines.append(f"{_indent(2)}return left <= right")
-    lines.append(f"{_indent(1)}return left < right")
     lines.append("")
 
     lines.append("def _normalize_category(value):")
@@ -217,9 +204,7 @@ def render_python(
         lines.append(f"{_indent(3)}if name is None:")
         lines.append(f"{_indent(4)}library = ctypes.CDLL(None)")
         lines.append(f"{_indent(3)}else:")
-        lines.append(
-            f"{_indent(4)}library = ctypes.CDLL(name)"
-        )
+        lines.append(f"{_indent(4)}library = ctypes.CDLL(name)")
         lines.append(f"{_indent(3)}expf = library.expf")
         lines.append(f"{_indent(3)}expf.argtypes = [ctypes.c_float]")
         lines.append(f"{_indent(3)}expf.restype = ctypes.c_float")
@@ -233,9 +218,7 @@ def render_python(
 
         lines.append("def _xgb_sigmoid(value):")
         lines.append(f"{_indent(1)}if _EXPF is None:")
-        lines.append(
-            f"{_indent(2)}return _f32(1.0 / (1.0 + math.exp(-value)))"
-        )
+        lines.append(f"{_indent(2)}return _f32(1.0 / (1.0 + math.exp(-value)))")
         lines.append(f"{_indent(1)}exp_value = _EXPF(ctypes.c_float(-value))")
         lines.append(f"{_indent(1)}denom = _f32(_f32(1.0) + exp_value)")
         lines.append(f"{_indent(1)}return _f32(_f32(1.0) / denom)")
@@ -257,17 +240,123 @@ def render_python(
         lines.append(f"{_indent(1)}return _round_half_up(score, _SCORE_SCALE)")
         lines.append("")
 
+    req_feats = list(ir.feature_names)
+    (
+        num_feats,
+        cat_feats,
+        zero_missing_feats,
+        none_missing_feats,
+    ) = _collect_tree_metadata(ir.trees)
+
+    lines.append("def _prepare_input(row):")
+    lines.append(f"{_indent(1)}# 1. 检查必需特征")
+    lines.append(f"{_indent(1)}req_features = {req_feats!r}")
+    lines.append(f"{_indent(1)}missing_keys = [k for k in req_features if k not in row]")
+    lines.append(f"{_indent(1)}if missing_keys:")
+    lines.append(
+        f"{_indent(2)}raise KeyError(f\"Missing required feature(s): {{', '.join(missing_keys)}}\")"
+    )
+    lines.append("")
+
+    lines.append(f"{_indent(1)}# 2. 识别缺失值与异常规则处理")
+    lines.append(f"{_indent(1)}prepared = {{}}")
+
+    if abnormal_spec.rule == "all_null":
+        lines.append(f"{_indent(1)}all_missing = True")
+        lines.append(f"{_indent(1)}for k in req_features:")
+        lines.append(f"{_indent(2)}v = row[k]")
+        lines.append(f"{_indent(2)}if _is_raw_missing(v):")
+        lines.append(f"{_indent(3)}prepared[k] = float('nan')")
+        lines.append(f"{_indent(2)}else:")
+        lines.append(f"{_indent(3)}prepared[k] = v")
+        lines.append(f"{_indent(3)}all_missing = False")
+        lines.append(f"{_indent(1)}if all_missing:")
+        lines.append(f"{_indent(2)}return prepared, True")
+    elif abnormal_spec.rule == "all_default":
+        assert abnormal_spec.default_fill_value is not None
+        fill_val = float(abnormal_spec.default_fill_value)
+        lines.append(f"{_indent(1)}fill_value = {fill_val!r}")
+        lines.append(f"{_indent(1)}all_default_hit = True")
+        lines.append(f"{_indent(1)}for k in req_features:")
+        lines.append(f"{_indent(2)}v = row[k]")
+        lines.append(f"{_indent(2)}if _is_raw_missing(v):")
+        lines.append(f"{_indent(3)}prepared[k] = fill_value")
+        lines.append(f"{_indent(2)}else:")
+        lines.append(f"{_indent(3)}prepared[k] = v")
+        lines.append(f"{_indent(2)}cur_v = prepared[k]")
+        lines.append(f"{_indent(2)}is_def = False")
+        lines.append(f"{_indent(2)}if cur_v == fill_value:")
+        lines.append(f"{_indent(3)}is_def = True")
+        lines.append(f"{_indent(2)}else:")
+        lines.append(f"{_indent(3)}try:")
+        lines.append(f"{_indent(4)}if float(cur_v) == fill_value:")
+        lines.append(f"{_indent(5)}is_def = True")
+        lines.append(f"{_indent(3)}except (TypeError, ValueError):")
+        lines.append(f"{_indent(4)}pass")
+        lines.append(f"{_indent(2)}if not is_def:")
+        lines.append(f"{_indent(3)}all_default_hit = False")
+        lines.append(f"{_indent(1)}if all_default_hit:")
+        lines.append(f"{_indent(2)}return prepared, True")
+    else:
+        lines.append(f"{_indent(1)}for k in req_features:")
+        lines.append(f"{_indent(2)}v = row[k]")
+        lines.append(f"{_indent(2)}if _is_raw_missing(v):")
+        lines.append(f"{_indent(3)}prepared[k] = float('nan')")
+        lines.append(f"{_indent(2)}else:")
+        lines.append(f"{_indent(3)}prepared[k] = v")
+
+    lines.append("")
+    lines.append(f"{_indent(1)}# 3. 数值类型转换")
+    lines.append(f"{_indent(1)}num_features = {num_feats!r}")
+    lines.append(f"{_indent(1)}invalid_entries = []")
+    lines.append(f"{_indent(1)}for k in num_features:")
+    lines.append(f"{_indent(2)}v = prepared[k]")
+    lines.append(f"{_indent(2)}if isinstance(v, float) and math.isnan(v):")
+    lines.append(f"{_indent(3)}continue")
+    lines.append(f"{_indent(2)}try:")
+    lines.append(f"{_indent(3)}prepared[k] = float(v)")
+    lines.append(f"{_indent(2)}except (TypeError, ValueError):")
+    lines.append(f"{_indent(3)}invalid_entries.append((k, v))")
+    lines.append(f"{_indent(1)}if invalid_entries:")
+    lines.append(
+        f"{_indent(2)}err_msg = ', '.join(f'{{k}}={{v!r}}' for k, v in invalid_entries)"
+    )
+    lines.append(
+        f"{_indent(2)}raise ValueError(f\"Invalid numeric value(s): {{err_msg}}\")"
+    )
+
+    lines.append("")
+    lines.append(f"{_indent(1)}# 4. 模型特定的缺失值标准化")
+    if zero_missing_feats:
+        lines.append(f"{_indent(1)}zero_missing_feats = {zero_missing_feats!r}")
+        lines.append(f"{_indent(1)}for k in zero_missing_feats:")
+        lines.append(f"{_indent(2)}v = prepared[k]")
+        lines.append(
+            f"{_indent(2)}if not (isinstance(v, float) and math.isnan(v)) and v == 0:"
+        )
+        lines.append(f"{_indent(3)}prepared[k] = float('nan')")
+    if none_missing_feats:
+        lines.append(f"{_indent(1)}none_missing_feats = {none_missing_feats!r}")
+        lines.append(f"{_indent(1)}for k in none_missing_feats:")
+        lines.append(f"{_indent(2)}v = prepared[k]")
+        lines.append(f"{_indent(2)}if isinstance(v, float) and math.isnan(v):")
+        lines.append(f"{_indent(3)}prepared[k] = 0.0")
+
+    lines.append("")
+    lines.append(f"{_indent(1)}return prepared, False")
+    lines.append("")
+
     for idx, tree in enumerate(ir.trees):
         lines.append(f"def _tree_{idx}(row):")
         _render_node(lines, tree, 1)
         lines.append("")
 
-    lines.append("def predict_row(row):")
-
-    abnormal_cond = _abnormal_python_condition(ir.feature_names, abnormal_spec)
-    if abnormal_cond is not None:
+    lines.append("def predict(row):")
+    lines.append(f"{_indent(1)}prepared, is_abnormal = _prepare_input(row)")
+    if abnormal_spec.active:
+        assert abnormal_spec.abnormal_value is not None
         abnormal_literal = _fmt_num(float(abnormal_spec.abnormal_value))
-        lines.append(f"{_indent(1)}if {abnormal_cond}:")
+        lines.append(f"{_indent(1)}if is_abnormal:")
         if score_spec is not None:
             lines.append(
                 f"{_indent(2)}return {{'score_p': {abnormal_literal}, 'score': {abnormal_literal}}}"
@@ -279,13 +368,13 @@ def render_python(
         lines.append(f"{_indent(1)}margin = _f32({_fmt_num(ir.base_margin)})")
         for idx in range(len(ir.trees)):
             lines.append(
-                f"{_indent(1)}margin = _f32(margin + _f32(_tree_{idx}(row)))"
+                f"{_indent(1)}margin = _f32(margin + _f32(_tree_{idx}(prepared)))"
             )
         lines.append(f"{_indent(1)}score_p = _xgb_sigmoid(margin)")
     else:
         lines.append(f"{_indent(1)}margin = {_fmt_num(ir.base_margin)}")
         for idx in range(len(ir.trees)):
-            lines.append(f"{_indent(1)}margin += _tree_{idx}(row)")
+            lines.append(f"{_indent(1)}margin += _tree_{idx}(prepared)")
         lines.append(f"{_indent(1)}score_p = 1.0 / (1.0 + math.exp(-margin))")
 
     if score_spec is not None:

@@ -82,15 +82,15 @@ def run_backend(backend: str) -> Dict[str, object]:
     )
     namespace: Dict[str, object] = {}
     exec(py_out["python"], namespace)
-    predict_row = namespace["predict_row"]
+    predict = namespace["predict"]
 
     for idx in range(min(80, len(x_test))):
         row = x_test.iloc[idx].to_dict()
-        got = float(predict_row(row)["score_p"])
+        got = float(predict(row)["score_p"])
         _assert_close(f"python_prob[{idx}]", got, float(reference[idx]), abs_tol)
 
     abnormal_row = {name: None for name in py_out["meta"]["feature_names"]}
-    abnormal_res = predict_row(abnormal_row)
+    abnormal_res = predict(abnormal_row)
     if abnormal_res["score_p"] != -2 or abnormal_res["score"] != -2:
         raise AssertionError("abnormal override failed")
 

@@ -615,8 +615,8 @@ def render_sql(
                 "        *",
                 f"        ,{_numeric_literal(score_spec.pdo, dialect, 'standard')} / ln(2) as b" if score_spec else "",
                 (
-                    f"        ,{_numeric_literal(score_spec.base_score, dialect, 'standard')} + ({_numeric_literal(score_spec.pdo, dialect, 'standard')} / ln(2)) * "
-                    f"ln({_numeric_literal(1.0, dialect, 'standard')} / {_numeric_literal(score_spec.base_odds, dialect, 'standard')}) as a"
+                    f"        ,{_numeric_literal(score_spec.base_score, dialect, 'standard')} - ({_numeric_literal(score_spec.pdo, dialect, 'standard')} / ln(2)) * "
+                    f"ln({_numeric_literal(score_spec.base_odds, dialect, 'standard')}) as a"
                     if score_spec
                     else ""
                 ),

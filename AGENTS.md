@@ -9,7 +9,7 @@ The project follows a classic compiler design: **Parser -> Intermediate Represen
 - **`ir.py`**: Defines the `ModelIR` and `TreeNode` dataclasses. All model types are first converted into this format before being rendered to SQL or Python.
 - **`parsers.py`**: Handles the logic for converting model objects (XGBoost/LightGBM) into the `ModelIR`. It supports numeric splits and binary classification.
 - **`render_sql.py`**: Renders the `ModelIR` into SQL. It supports multiple dialects (PSQL, Hive) and modes (expression, select, ddl).
-- **`render_python.py`**: Renders the `ModelIR` into a self-contained Python function `predict_row`.
+- **`render_python.py`**: Renders the `ModelIR` into a self-contained Python function `predict`.
 - **`render_pmml.py`**: Renders the `ModelIR` into PMML XML using only the Python standard library. Supported PMML versions are `4.4.1`, `4.3`, and `4.2.1`.
 - **`scoring.py`**: Contains the logic for credit scorecard conversion (Probability to Score) and abnormal value rules.
 - **`api.py`**: The main entry point `convert()` that orchestrates the entire process.
@@ -51,3 +51,17 @@ Tests are located in the `tests/` directory.
 6. **When releasing**, update the project version, run local tests, build the package, push `main`, and tag the release as `v<version>` so the GitHub Release workflow can publish artifacts.
 
 Happy coding!
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specifications are tracked in this repository's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The repository uses the default five-role triage label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+The repository uses a single-context domain documentation layout. See `docs/agents/domain.md`.

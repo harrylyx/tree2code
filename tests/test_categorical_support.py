@@ -9,7 +9,7 @@ from tree2code.parsers import parse_model
 def _load_predictor(code: str):
     namespace = {}
     exec(code, namespace)
-    return namespace["predict_row"]
+    return namespace["predict"]
 
 
 def _iter_split_nodes(node):
@@ -63,23 +63,23 @@ def test_lgb_missing_type_none_is_parsed(lgb_model):
 
 def test_lgb_categorical_python_parity(lgb_categorical_model, categorical_sample_rows):
     result = convert(lgb_categorical_model, to="python", compatible_mode=True)
-    predict_row = _load_predictor(result["python"])
+    predict = _load_predictor(result["python"])
 
     reference = lgb_categorical_model.predict_proba(categorical_sample_rows)[:, 1]
     for idx in range(min(120, len(categorical_sample_rows))):
         row = categorical_sample_rows.iloc[idx].to_dict()
-        pred = predict_row(row)["score_p"]
+        pred = predict(row)["score_p"]
         assert math.isclose(pred, float(reference[idx]), rel_tol=0.0, abs_tol=1e-12)
 
 
 def test_xgb_categorical_python_parity(xgb_categorical_model, categorical_sample_rows):
     result = convert(xgb_categorical_model, to="python", compatible_mode=True)
-    predict_row = _load_predictor(result["python"])
+    predict = _load_predictor(result["python"])
 
     reference = xgb_categorical_model.predict_proba(categorical_sample_rows)[:, 1]
     for idx in range(min(120, len(categorical_sample_rows))):
         row = categorical_sample_rows.iloc[idx].to_dict()
-        pred = predict_row(row)["score_p"]
+        pred = predict(row)["score_p"]
         assert math.isclose(pred, float(reference[idx]), rel_tol=0.0, abs_tol=1e-6)
 
 
@@ -114,24 +114,24 @@ def test_score_case_expression_is_multiline_formatted(xgb_model, score_params):
 
 def test_python_missing_nan_is_treated_as_missing(xgb_model, sample_rows):
     out = convert(xgb_model, to="python", compatible_mode=True)
-    predict_row = _load_predictor(out["python"])
+    predict = _load_predictor(out["python"])
 
     row = sample_rows.iloc[0].to_dict()
     row["f0"] = float("nan")
 
-    pred = float(predict_row(row)["score_p"])
+    pred = float(predict(row)["score_p"])
     expected = float(xgb_model.predict_proba(pd.DataFrame([row]))[0, 1])
     assert math.isclose(pred, expected, rel_tol=0.0, abs_tol=1e-6)
 
 
 def test_lgb_python_missing_type_none_matches_native(lgb_model, sample_rows):
     out = convert(lgb_model, to="python", compatible_mode=True)
-    predict_row = _load_predictor(out["python"])
+    predict = _load_predictor(out["python"])
 
     row = sample_rows.iloc[0].to_dict()
     row["f0"] = float("nan")
 
-    pred = float(predict_row(row)["score_p"])
+    pred = float(predict(row)["score_p"])
     expected = float(lgb_model.predict_proba(pd.DataFrame([row]))[0, 1])
     assert math.isclose(pred, expected, rel_tol=0.0, abs_tol=1e-12)
 
@@ -139,8 +139,7 @@ def test_lgb_python_missing_type_none_matches_native(lgb_model, sample_rows):
 def test_xgb_python_code_uses_float32_branch_compare(xgb_model):
     out = convert(xgb_model, to="python", compatible_mode=True)
     code = out["python"]
-    assert "_safe_numeric_compare(" in code
-    assert "True, 'nan')" in code
+    assert "_f32(v)" in code
 
 
 def test_sql_missing_expression_contains_nan_check(xgb_model):
