@@ -439,6 +439,7 @@ def render_sql(
         score_spec: Optional scorecard parameters.
         abnormal_spec: Abnormal rule specification.
         literal_format: Literal formatting mode ('standard' or 'scientific').
+        compatible_mode: Whether to treat NaN in addition to NULL as missing.
 
     Returns:
         Dict[str, Optional[str]]: Generated SQL components.

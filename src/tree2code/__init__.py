@@ -1,4 +1,4 @@
-"""tree2code: Convert XGBoost and LightGBM models into SQL and Python."""
+"""Convert XGBoost and LightGBM models into SQL, Python, or PMML."""
 
 from .api import convert
 

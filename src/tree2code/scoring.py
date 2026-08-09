@@ -13,9 +13,10 @@ class ScoreSpec:
     """Specification for credit scorecard conversion.
 
     Attributes:
-        base_score: The base score at base odds.
-        pdo: Points to Double the Odds.
-        base_odds: The odds at the base score.
+        base_score: The score at the configured negative-to-positive base odds.
+        pdo: Points added when negative-to-positive odds double.
+        base_odds: Negative-to-positive class odds ``(1 - p) / p`` at the
+            base score.
         score_scale: Number of decimal places to round the final score.
         epsilon: Small value to clamp probability to avoid log(0).
     """
@@ -33,7 +34,7 @@ class ScoreSpec:
 
     @property
     def offset(self) -> float:
-        """Calculate the offset for the score formula."""
+        """Calculate the offset for negative-to-positive base odds."""
         return self.base_score - self.factor * math.log(self.base_odds)
 
 
@@ -48,7 +49,8 @@ def build_score_spec(
     Args:
         base_score: Optional base score.
         pdo: Optional PDO.
-        base_odds: Optional base odds.
+        base_odds: Optional negative-to-positive class odds ``(1 - p) / p`` at
+            ``base_score``.
         score_scale: Precision for rounding.
 
     Returns:

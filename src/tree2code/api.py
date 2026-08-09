@@ -82,12 +82,16 @@ def convert(
         output_table: Target table name for DDL mode. Defaults to "output_table".
         base_score: Credit scorecard parameter: base score.
         pdo: Credit scorecard parameter: points to double the odds.
-        base_odds: Credit scorecard parameter: base odds.
+        base_odds: Credit scorecard parameter: negative-to-positive class odds
+            ``(1 - p) / p`` at ``base_score``.
         score_scale: Number of decimal places for the score. Defaults to 3.
         abnormal_rule: Predefined check rule. One of 'all_null' or 'all_default'.
-        default_fill_value: The value representing 'default/null' if rule is 'all_default'.
+        default_fill_value: The fill value used by generated Python, and the value
+            checked by Python and SQL, when ``abnormal_rule`` is ``'all_default'``.
         abnormal_value: The value to output if the abnormal rule is triggered.
-        compatible_mode: Whether to enable nan handling. Default is False.
+        compatible_mode: Whether generated SQL should recognize NaN in addition
+            to NULL as missing. Generated Python and PMML are unaffected. Defaults
+            to False.
         pmml_version: PMML version. One of '4.4.1', '4.3', or '4.2.1'.
         pmml_model_name: Model name to use in generated PMML.
         pmml_target_name: Synthetic binary target field name to use in PMML.
