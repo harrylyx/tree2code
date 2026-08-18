@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tree2code"
-version = "0.2.7"
-description = "Convert XGBoost and LightGBM binary models into SQL, pure Python, or PMML."
+version = "0.3.0"
+description = "Convert XGBoost and LightGBM binary models into SQL or pure Python."
 readme = "README.md"
 requires-python = ">=3.8,<3.15"
 license = { text = "MIT" }
@@ -26,7 +26,6 @@ dev = [
   "lightgbm",
   "pyarrow",
   "psycopg[binary]",
-  "pypmml==1.0.2",
 ]
 
 [tool.pytest.ini_options]
